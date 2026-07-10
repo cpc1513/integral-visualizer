@@ -1,4 +1,4 @@
-import type { IntegralType } from "../calculator/types";
+import type { IntegralSpec, IntegralType } from "../calculator/types";
 
 export interface RichTextSegment {
   type: "text" | "math";
@@ -22,6 +22,12 @@ export interface ExamQuestion {
   quality: string[];
 }
 
+export interface VisualizableExamQuestion extends ExamQuestion {
+  integralType: IntegralType;
+  visualizationSpec: IntegralSpec;
+  visualizationSource: "题面显式积分" | "解答累次积分" | "题面几何边界" | "题面参数方程";
+}
+
 export interface QuestionDataset {
   meta: {
     title: string;
@@ -31,4 +37,8 @@ export interface QuestionDataset {
     countsByAcademicYear: Record<string, number>;
   };
   questions: ExamQuestion[];
+}
+
+export interface VisualizableQuestionDataset extends Omit<QuestionDataset, "questions"> {
+  questions: VisualizableExamQuestion[];
 }

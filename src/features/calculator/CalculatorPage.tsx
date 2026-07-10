@@ -81,9 +81,14 @@ export function CalculatorPage() {
   const location = useLocation();
   const [calculator, setCalculator] = useState(loadCalculatorState);
   const [mathfield, setMathfield] = useState<MathfieldElement | null>(null);
-  const [results, setResults] = useState<Record<IntegralType, ComputeResult | null>>(() => ({
-    ...seededResults,
-  }));
+  const [results, setResults] = useState<Record<IntegralType, ComputeResult | null>>(() =>
+    Object.fromEntries(
+      (Object.keys(integralExamples) as IntegralType[]).map((type) => [
+        type,
+        calculator.specs[type].latex === integralExamples[type].latex ? seededResults[type] : null,
+      ]),
+    ) as Record<IntegralType, ComputeResult | null>,
+  );
   const [status, setStatus] = useState<ComputeStatus>("idle");
   const [error, setError] = useState("");
   const activeSpec = calculator.specs[calculator.activeType];
@@ -93,9 +98,17 @@ export function CalculatorPage() {
   }, [calculator]);
 
   useEffect(() => {
-    const incoming = location.state as { type?: IntegralType } | null;
-    if (!incoming?.type) return;
-    setCalculator((current) => ({ ...current, activeType: incoming.type! }));
+    const incoming = location.state as { visualizationSpec?: IntegralSpec } | null;
+    const spec = incoming?.visualizationSpec;
+    if (!spec || !["ordinary", "double", "triple", "line", "surface"].includes(spec.type)) return;
+    const nextSpec = structuredClone(spec);
+    setCalculator((current) => ({
+      activeType: nextSpec.type,
+      specs: { ...current.specs, [nextSpec.type]: nextSpec },
+    }));
+    setResults((current) => ({ ...current, [nextSpec.type]: null }));
+    setStatus("idle");
+    setError("");
   }, [location.state]);
 
   const setActiveType = (activeType: IntegralType) => {

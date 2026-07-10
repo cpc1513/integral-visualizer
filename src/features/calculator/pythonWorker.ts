@@ -13,8 +13,8 @@ const PYTHON_SETUP = String.raw`
 import json
 import time
 from sympy import (
-    Abs, E, Integral, Matrix, Symbol, cos, cot, exp, latex, log, nan,
-    oo, pi, sin, sqrt, tan, zoo, integrate, lambdify, N
+    Abs, E, Integral, Matrix, Symbol, acos, asin, atan, cos, cosh, cot, exp,
+    latex, log, nan, oo, pi, sin, sinh, sqrt, tan, zoo, integrate, lambdify, N
 )
 from sympy.parsing.sympy_parser import (
     convert_xor, implicit_multiplication_application, parse_expr,
@@ -26,8 +26,9 @@ SYMBOL_NAMES = "abcdefghijklmnopqrstuvwxyz"
 SYMBOLS = {name: Symbol(name, real=True) for name in SYMBOL_NAMES}
 LOCALS = {
     **SYMBOLS,
-    "pi": pi, "E": E, "sqrt": sqrt, "sin": sin, "cos": cos,
-    "tan": tan, "cot": cot, "exp": exp, "log": log, "Abs": Abs,
+    "pi": pi, "E": E, "e": E, "sqrt": sqrt, "sin": sin, "cos": cos,
+    "tan": tan, "cot": cot, "asin": asin, "acos": acos, "atan": atan,
+    "sinh": sinh, "cosh": cosh, "exp": exp, "log": log, "Abs": Abs, "abs": Abs,
 }
 
 def parse_math(value):

@@ -16,7 +16,7 @@ export const MathExpression = memo(function MathExpression({
 }: MathExpressionProps) {
   const markup = useMemo(
     () =>
-      katex.renderToString(latex || "\\square", {
+      katex.renderToString((latex || "\\square").replace(/[\u2000-\u200b]/g, " "), {
         displayMode: display,
         throwOnError: false,
         strict: "ignore",

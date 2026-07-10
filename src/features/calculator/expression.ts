@@ -1,4 +1,9 @@
 const FUNCTION_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\\arcsin/g, " asin"],
+  [/\\arccos/g, " acos"],
+  [/\\arctan/g, " atan"],
+  [/\\sinh/g, " sinh"],
+  [/\\cosh/g, " cosh"],
   [/\\sin/g, " sin"],
   [/\\cos/g, " cos"],
   [/\\tan/g, " tan"],
@@ -38,12 +43,21 @@ export function latexToExpression(latex: string): string {
     .replace(/\\pi/g, "pi")
     .replace(/π/g, "pi")
     .replace(/−/g, "-");
-  output = replaceSimpleFractions(output);
-  output = replaceRoots(output);
+  for (let pass = 0; pass < 8; pass += 1) {
+    const previous = output;
+    output = replaceSimpleFractions(output);
+    output = replaceRoots(output);
+    if (output === previous) break;
+  }
   for (const [pattern, replacement] of FUNCTION_REPLACEMENTS) output = output.replace(pattern, replacement);
   output = output
-    .replace(/\b(sin|cos|tan|cot|log|exp)\s+([A-Za-z])/g, "$1($2)")
-    .replace(/([A-Za-z0-9)])\s+(?=(?:sin|cos|tan|cot|log|exp)\()/g, "$1*")
+    .replace(/\|([^|]+)\|/g, "abs($1)")
+    .replace(/\b(asin|acos|atan|sinh|cosh|sin|cos|tan|cot|log|exp)\s+([A-Za-z])/g, "$1($2)")
+    .replace(/([A-Za-z0-9)])\s+(?=(?:asin|acos|atan|sinh|cosh|sin|cos|tan|cot|log|exp)\()/g, "$1*")
     .replace(/([0-9)])pi\b/g, "$1*pi");
-  return output.replace(/[{}]/g, (token) => (token === "{" ? "(" : ")")).replace(/\s+/g, " ").trim();
+  return output
+    .replace(/[{}]/g, (token) => (token === "{" ? "(" : ")"))
+    .replace(/\s*([+\-*/])\s*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }

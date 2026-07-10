@@ -1,28 +1,18 @@
 import type { MathfieldElement } from "mathlive";
+import { useState } from "react";
 import { MathExpression } from "../../components/math/MathExpression";
-
-const symbols = [
-  { label: "积分", latex: "\\int" },
-  { label: "二重积分", latex: "\\iint" },
-  { label: "三重积分", latex: "\\iiint" },
-  { label: "闭合积分", latex: "\\oint" },
-  { label: "根号", latex: "\\sqrt{#0}" },
-  { label: "圆周率", latex: "\\pi" },
-  { label: "角度变量 theta", latex: "\\theta" },
-  { label: "变量 x", latex: "x" },
-  { label: "变量 y", latex: "y" },
-  { label: "变量 z", latex: "z" },
-  { label: "小于等于", latex: "\\le" },
-  { label: "大于等于", latex: "\\ge" },
-  { label: "正弦", latex: "\\sin" },
-  { label: "余弦", latex: "\\cos" },
-] as const;
+import { mathSymbolCategories, type SymbolCategoryId } from "./mathSymbols";
 
 interface SymbolKeyboardProps {
   mathfield: MathfieldElement | null;
 }
 
 export function SymbolKeyboard({ mathfield }: SymbolKeyboardProps) {
+  const [activeCategory, setActiveCategory] = useState<SymbolCategoryId>("common");
+  const symbols =
+    mathSymbolCategories.find((category) => category.id === activeCategory)?.symbols ??
+    mathSymbolCategories[0].symbols;
+
   const insert = (latex: string) => {
     if (!mathfield) return;
     mathfield.focus();
@@ -31,17 +21,34 @@ export function SymbolKeyboard({ mathfield }: SymbolKeyboardProps) {
 
   return (
     <div className="symbol-keyboard" aria-label="数学符号键盘">
-      {symbols.map((symbol) => (
-        <button
-          className="symbol-key"
-          type="button"
-          key={symbol.label}
-          aria-label={symbol.label}
-          onClick={() => insert(symbol.latex)}
-        >
-          <MathExpression latex={symbol.latex.replace("#0", "x")} />
-        </button>
-      ))}
+      <div className="symbol-tabs" role="tablist" aria-label="数学符号分类">
+        {mathSymbolCategories.map((category) => (
+          <button
+            className={category.id === activeCategory ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={category.id === activeCategory}
+            key={category.id}
+            onClick={() => setActiveCategory(category.id)}
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+      <div className="symbol-grid" role="tabpanel">
+        {symbols.map((symbol) => (
+          <button
+            className="symbol-key"
+            type="button"
+            key={symbol.label}
+            aria-label={symbol.label}
+            disabled={!mathfield}
+            onClick={() => insert(symbol.latex)}
+          >
+            <MathExpression latex={symbol.preview ?? symbol.latex} />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

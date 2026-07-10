@@ -22,5 +22,8 @@ describe("integral formula model", () => {
 
   it("normalizes common LaTeX into a parser-friendly expression", () => {
     expect(latexToExpression("4-x^2-\\sqrt{y}+2\\pi")).toBe("4-x^2-sqrt(y)+2*pi");
+    expect(latexToExpression("\\frac{\\sqrt{5}-1}{2}")).toBe("((sqrt(5)-1)/(2))");
+    expect(latexToExpression("\\left|x-y\\right|")).toBe("abs(x-y)");
+    expect(latexToExpression("\\arcsin x+\\sinh y")).toBe("asin(x)+sinh(y)");
   });
 });

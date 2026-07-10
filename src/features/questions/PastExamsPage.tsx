@@ -1,21 +1,18 @@
 import { AlertCircle, ArrowUpRight, BookOpenText, Filter, Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import questionData from "../../data/questions.generated.json";
 import type { IntegralType } from "../calculator/types";
 import { RichQuestionText } from "./RichQuestionText";
-import type { ExamQuestion, QuestionDataset, RichTextBlock } from "./types";
+import type { RichTextBlock, VisualizableExamQuestion } from "./types";
+import { visualizableDataset as dataset } from "./visualizableQuestions";
 
-const dataset = questionData as QuestionDataset;
 
-const typeLabels: Record<ExamQuestion["integralType"], string> = {
+const typeLabels: Record<IntegralType, string> = {
   ordinary: "普通积分",
   double: "二重积分",
   triple: "三重积分",
   line: "曲线积分",
   surface: "曲面积分",
-  other: "其他",
-  summary: "汇总说明",
 };
 
 function blocksToText(blocks: RichTextBlock[]) {
@@ -37,17 +34,8 @@ const searchIndex = new Map(
   ]),
 );
 
-const loadableTypes = new Set<ExamQuestion["integralType"]>([
-  "ordinary",
-  "double",
-  "triple",
-  "line",
-  "surface",
-]);
-
-function QuestionItem({ question }: { question: ExamQuestion }) {
+function QuestionItem({ question }: { question: VisualizableExamQuestion }) {
   const navigate = useNavigate();
-  const canOpenCalculator = loadableTypes.has(question.integralType);
   return (
     <article className="question-row">
       <div className="question-index" aria-hidden="true">
@@ -86,17 +74,17 @@ function QuestionItem({ question }: { question: ExamQuestion }) {
               )}
             </div>
           </details>
-          {canOpenCalculator ? (
-            <button
-              type="button"
-              className="load-calculator-button"
-              onClick={() => navigate("/", { state: { type: question.integralType as IntegralType } })}
-              title="打开同类积分的可视化模板"
-            >
-              打开同类计算台
-              <ArrowUpRight size={15} aria-hidden="true" />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="load-calculator-button"
+            onClick={() =>
+              navigate("/", { state: { visualizationSpec: question.visualizationSpec } })
+            }
+            title="把本题公式与积分区域载入在线计算台"
+          >
+            一键在计算台可视化
+            <ArrowUpRight size={15} aria-hidden="true" />
+          </button>
         </div>
       </div>
     </article>
@@ -106,7 +94,7 @@ function QuestionItem({ question }: { question: ExamQuestion }) {
 export function PastExamsPage() {
   const [query, setQuery] = useState("");
   const [year, setYear] = useState("all");
-  const [type, setType] = useState<ExamQuestion["integralType"] | "all">("all");
+  const [type, setType] = useState<IntegralType | "all">("all");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("zh-CN"));
   const years = [...Object.keys(dataset.meta.countsByAcademicYear)].sort((a, b) => b.localeCompare(a));
 
@@ -127,7 +115,7 @@ export function PastExamsPage() {
         <div>
           <h1>往年真题</h1>
           <p>
-            共收录 {dataset.meta.extractedCount} 道题、{dataset.meta.formulaCount} 个公式；保留原题面、原解答与来源备注。
+            共收录 {dataset.meta.extractedCount} 道可视化真题、{dataset.meta.formulaCount} 个公式；每题均已通过积分区域校验。
           </p>
         </div>
         <span className="question-count">当前显示 {filteredQuestions.length} 道</span>
