@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { MathInputField } from "./MathInputField";
 
 interface ExpressionFieldProps {
   label: string;
@@ -8,17 +8,5 @@ interface ExpressionFieldProps {
 }
 
 export function ExpressionField({ label, value, onChange, compact = false }: ExpressionFieldProps) {
-  const id = useId();
-  return (
-    <label className={`expression-field${compact ? " is-compact" : ""}`} htmlFor={id}>
-      <span>{label}</span>
-      <input
-        id={id}
-        value={value}
-        spellCheck={false}
-        autoComplete="off"
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
-  );
+  return <MathInputField label={label} value={value} onChange={onChange} compact={compact} />;
 }

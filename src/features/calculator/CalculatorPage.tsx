@@ -1,5 +1,4 @@
-import type { MathfieldElement } from "mathlive";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { BoundsEditor } from "./BoundsEditor";
 import { ComputePanel } from "./ComputePanel";
@@ -8,7 +7,8 @@ import { FormulaEditor } from "./FormulaEditor";
 import { regenerateFormula, synchronizeFormula } from "./formula";
 import { IntegralTypeSelector } from "./IntegralTypeSelector";
 import { SymbolKeyboard } from "./SymbolKeyboard";
-import type { ComputeResult, ComputeStatus, IntegralSpec, IntegralType } from "./types";
+import { MathfieldFocusProvider } from "./MathfieldFocusContext";
+import type { ComputeMethod, ComputeResult, ComputeStatus, IntegralSpec, IntegralType } from "./types";
 import { VisualizationCanvas } from "../visualization/VisualizationCanvas";
 
 const STORAGE_KEY = "integral-visualizer:calculator:v1";
@@ -80,7 +80,6 @@ function loadCalculatorState(): StoredCalculatorState {
 export function CalculatorPage() {
   const location = useLocation();
   const [calculator, setCalculator] = useState(loadCalculatorState);
-  const [mathfield, setMathfield] = useState<MathfieldElement | null>(null);
   const [results, setResults] = useState<Record<IntegralType, ComputeResult | null>>(() =>
     Object.fromEntries(
       (Object.keys(integralExamples) as IntegralType[]).map((type) => [
@@ -91,7 +90,20 @@ export function CalculatorPage() {
   );
   const [status, setStatus] = useState<ComputeStatus>("idle");
   const [error, setError] = useState("");
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [activeMethod, setActiveMethod] = useState<ComputeMethod>("auto");
+  const requestVersionRef = useRef(0);
   const activeSpec = calculator.specs[calculator.activeType];
+  const busy = ["loading-python", "loading-symbolics", "computing", "loading-numerics"].includes(status);
+
+  useEffect(() => {
+    if (!busy || startedAt === null) return;
+    const update = () => setElapsedMs(Date.now() - startedAt);
+    update();
+    const timer = window.setInterval(update, 200);
+    return () => window.clearInterval(timer);
+  }, [busy, startedAt]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(calculator));
@@ -130,24 +142,64 @@ export function CalculatorPage() {
     setError("");
   }, []);
 
-  const compute = async () => {
+  const compute = async (method: ComputeMethod = "auto") => {
+    const requestVersion = ++requestVersionRef.current;
+    const resolvedMethod: ComputeMethod =
+      (activeSpec.type === "double" || activeSpec.type === "triple") && activeSpec.regionMode === "constraints"
+        ? "numeric"
+        : method === "auto"
+          ? activeSpec.preferredComputeMode ?? "exact"
+          : method;
     setError("");
     setStatus("loading-python");
+    setElapsedMs(0);
+    setStartedAt(Date.now());
+    setActiveMethod(resolvedMethod);
     const requestedType = activeSpec.type;
     try {
-      const { computeIntegral } = await import("./computeClient");
-      const result = await computeIntegral(activeSpec, setStatus);
+      const { cancelActiveComputation, computeIntegral } = await import("./computeClient");
+      cancelActiveComputation();
+      const result = await computeIntegral(
+        activeSpec,
+        (nextStatus) => {
+          if (requestVersion === requestVersionRef.current) setStatus(nextStatus);
+        },
+        resolvedMethod,
+      );
+      if (requestVersion !== requestVersionRef.current) return;
       setResults((current) => ({ ...current, [requestedType]: result }));
       setStatus("complete");
     } catch (reason) {
+      if (requestVersion !== requestVersionRef.current) return;
+      const { ComputationCancelledError } = await import("./computeClient");
+      if (reason instanceof ComputationCancelledError) {
+        setStatus("stopped");
+        setError("");
+        return;
+      }
       setError(reason instanceof Error ? reason.message : String(reason));
       setStatus("error");
+    } finally {
+      if (requestVersion === requestVersionRef.current) setStartedAt(null);
     }
+  };
+
+  const stopCompute = async () => {
+    const { cancelActiveComputation } = await import("./computeClient");
+    cancelActiveComputation();
+  };
+
+  const useNumericCompute = async () => {
+    requestVersionRef.current += 1;
+    const { cancelActiveComputation } = await import("./computeClient");
+    cancelActiveComputation();
+    void compute("numeric");
   };
 
   const formulaValue = useMemo(() => activeSpec.latex, [activeSpec.latex]);
 
   return (
+    <MathfieldFocusProvider>
     <div className="calculator-page">
       <section className="calculator-rail" aria-label="积分计算台">
         <div className="calculator-scroll">
@@ -160,10 +212,9 @@ export function CalculatorPage() {
             <h2>输入完整公式</h2>
             <FormulaEditor
               value={formulaValue}
-              onReady={setMathfield}
               onChange={(latex) => updateActiveSpec(synchronizeFormula(activeSpec, latex), true)}
             />
-            <SymbolKeyboard mathfield={mathfield} />
+            <SymbolKeyboard />
           </section>
 
           <section className="control-section bounds-section">
@@ -174,11 +225,16 @@ export function CalculatorPage() {
             status={status}
             result={results[calculator.activeType]}
             error={error}
-            onCompute={compute}
+            onCompute={() => void compute("auto")}
+            onStop={() => void stopCompute()}
+            onUseNumeric={() => void useNumericCompute()}
+            elapsedMs={elapsedMs}
+            showNumericSwitch={status === "computing" && elapsedMs >= 12_000 && activeMethod !== "numeric"}
           />
         </div>
       </section>
       <VisualizationCanvas spec={activeSpec} />
     </div>
+    </MathfieldFocusProvider>
   );
 }

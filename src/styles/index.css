@@ -376,27 +376,112 @@ math-field:focus-visible {
   font-weight: 650;
 }
 
-.expression-field input {
+.math-input-host {
+  min-width: 0;
+}
+
+.math-input-control {
   width: 100%;
-  height: 30px;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
   padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fbfcfe;
   color: var(--navy);
   font-family: "STIX Two Math", "Cambria Math", "Times New Roman", serif;
-  font-size: 14px;
+  font-size: 15px;
   transition: border-color 120ms ease, box-shadow 120ms ease;
+  --caret-color: var(--blue);
+  --selection-background-color: rgba(37, 99, 235, 0.16);
 }
 
-.expression-field input:focus {
+.math-input-control:focus-within {
   border-color: var(--blue);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
 }
 
-.expression-field.is-compact input {
+.math-input-control::part(menu-toggle),
+.math-input-control::part(virtual-keyboard-toggle) {
+  display: none;
+}
+
+.expression-field.is-compact .math-input-control {
   text-align: center;
+}
+
+.constraint-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.constraint-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: end;
+  gap: 5px;
+}
+
+.icon-button,
+.add-constraint-button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.constraint-delete {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+
+.constraint-delete:hover {
+  border-color: #f0a5a5;
+  color: var(--danger);
+}
+
+.constraint-delete:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.add-constraint-button {
+  min-height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.constraint-ranges {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 5px;
+}
+
+.range-row > span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
 }
 
 .bound-row {
@@ -455,6 +540,13 @@ math-field:focus-visible {
   box-shadow: 0 1px 4px rgba(16, 42, 76, 0.11);
 }
 
+.compute-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+
 .compute-button {
   width: 100%;
   height: 42px;
@@ -462,7 +554,6 @@ math-field:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 9px;
-  margin-top: 10px;
   border: 0;
   border-radius: 9px;
   background: var(--blue);
@@ -472,6 +563,30 @@ math-field:focus-visible {
   cursor: pointer;
   box-shadow: 0 7px 16px rgba(37, 99, 235, 0.2);
   transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.compute-button.is-stopping {
+  background: #c24141;
+  box-shadow: 0 7px 16px rgba(194, 65, 65, 0.18);
+}
+
+.compute-button.is-stopping:hover {
+  background: #aa3434;
+}
+
+.numeric-switch-button {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #9bb8f8;
+  border-radius: 8px;
+  background: var(--blue-50);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .compute-button:hover:not(:disabled) {
@@ -504,6 +619,10 @@ math-field:focus-visible {
 
 .status-error {
   color: var(--danger);
+}
+
+.status-stopped {
+  color: var(--muted);
 }
 
 .result-grid {

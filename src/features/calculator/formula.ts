@@ -18,6 +18,11 @@ export function generateFormulaLatex(spec: IntegralSpec): string {
   }
 
   if (spec.type === "double" || spec.type === "triple") {
+    if (spec.regionMode === "constraints") {
+      const sign = spec.type === "double" ? "\\iint_D" : "\\iiint_\\Omega";
+      const measures = spec.type === "double" ? "\\,dA" : "\\,dV";
+      return `${sign} ${spec.integrand}${measures}`;
+    }
     const signs = [...spec.bounds].reverse().map(boundedIntegral).join("");
     const measures = spec.bounds.map((bound) => differential(bound.variable)).join("");
     return `${signs} ${spec.integrand}${measures}`;
@@ -110,6 +115,7 @@ export function synchronizeFormula(spec: IntegralSpec, latex: string): IntegralS
     return next;
   }
   if (spec.type === "double" || spec.type === "triple") {
+    if (spec.regionMode === "constraints") return { ...spec, latex };
     const count = spec.type === "double" ? 2 : 3;
     const parsed = parseNestedIntegrals(latex, count);
     if (!parsed) return { ...spec, latex };

@@ -7,11 +7,25 @@ export interface VariableBound {
   label: string;
 }
 
+export interface ConstraintRange {
+  variable: string;
+  lower: string;
+  upper: string;
+}
+
+export interface ConstraintRegion {
+  constraints: string[];
+  ranges: ConstraintRange[];
+}
+
+export type ComputeMethod = "auto" | "exact" | "numeric";
+
 interface BaseIntegralSpec {
   type: IntegralType;
   integrand: string;
   latex: string;
   exampleName: string;
+  preferredComputeMode?: Exclude<ComputeMethod, "auto">;
 }
 
 export interface OrdinaryIntegralSpec extends BaseIntegralSpec {
@@ -25,6 +39,8 @@ export interface MultipleIntegralSpec<T extends "double" | "triple" = "double" |
   type: T;
   /** Bounds are stored inner-most first so symbolic integration is deterministic. */
   bounds: VariableBound[];
+  regionMode?: "bounds" | "constraints";
+  constraintRegion?: ConstraintRegion;
 }
 
 export interface LineIntegralSpec extends BaseIntegralSpec {
@@ -67,4 +83,5 @@ export type ComputeStatus =
   | "computing"
   | "loading-numerics"
   | "complete"
+  | "stopped"
   | "error";

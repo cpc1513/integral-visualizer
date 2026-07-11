@@ -1,5 +1,6 @@
 import type { Config, Layout } from "plotly.js";
 import { latexToExpression } from "../calculator/expression";
+import { constraintViolation, parseConstraint } from "../calculator/constraintExpression";
 import type { IntegralSpec, VariableBound } from "../calculator/types";
 
 export interface IntegralPlotSpec {
@@ -128,6 +129,152 @@ async function doublePlot(spec: Extract<IntegralSpec, { type: "double" }>) {
     dimension: "2d",
     summary: `填充由 ${inner.variable}=${inner.lower} 与 ${inner.variable}=${inner.upper} 围成的二重积分区域。`,
   } satisfies IntegralPlotSpec;
+}
+
+async function constraintRegionPlot(
+  spec: Extract<IntegralSpec, { type: "double" | "triple" }>,
+): Promise<IntegralPlotSpec> {
+  const region = spec.constraintRegion;
+  const dimensionCount = spec.type === "double" ? 2 : 3;
+  if (!region || region.constraints.length === 0) throw new Error("请至少输入一条积分区域约束");
+  if (region.ranges.length !== dimensionCount) throw new Error(`当前区域需要 ${dimensionCount} 个扫描范围`);
+  const parsed = region.constraints.map(parseConstraint);
+  const evaluators = await Promise.all(
+    parsed.map(async (constraint) => ({
+      constraint,
+      left: await createEvaluator(constraint.left),
+      right: await createEvaluator(constraint.right),
+    })),
+  );
+  const ranges = await Promise.all(
+    region.ranges.map(async (range) => {
+      const [lower, upper] = await evaluateBound(range);
+      if (lower >= upper) throw new Error(`${range.variable} 的扫描范围下限必须小于上限`);
+      return { ...range, lowerValue: lower, upperValue: upper };
+    }),
+  );
+  const maxSpan = Math.max(...ranges.map((range) => range.upperValue - range.lowerValue));
+  const tolerance = maxSpan * 0.006;
+  const violationAt = (scope: Record<string, number>) =>
+    Math.max(
+      ...evaluators.map(({ constraint, left, right }) =>
+        constraintViolation(constraint, left(scope), right(scope), tolerance),
+      ),
+    );
+
+  if (spec.type === "double") {
+    const [xRange, yRange] = ranges;
+    const x = linspace(xRange.lowerValue, xRange.upperValue, 160);
+    const y = linspace(yRange.lowerValue, yRange.upperValue, 160);
+    let validCount = 0;
+    const mask = y.map((yValue) =>
+      x.map((xValue) => {
+        const valid = violationAt({ [xRange.variable]: xValue, [yRange.variable]: yValue }) <= 0;
+        if (valid) validCount += 1;
+        return valid ? 1 : null;
+      }),
+    );
+    if (validCount === 0) throw new Error("当前扫描范围内没有满足全部约束的区域");
+    return {
+      data: [{
+        type: "heatmap",
+        x,
+        y,
+        z: mask,
+        zmin: 0,
+        zmax: 1,
+        showscale: false,
+        colorscale: [[0, "rgba(37,99,235,.32)"], [1, "rgba(37,99,235,.32)"]],
+        hovertemplate: `${xRange.variable}=%{x:.4g}<br>${yRange.variable}=%{y:.4g}<extra>区域内</extra>`,
+      }],
+      layout: {
+        ...commonLayout,
+        xaxis: { title: { text: xRange.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0" },
+        yaxis: { title: { text: yRange.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0", scaleanchor: "x", scaleratio: 1 },
+      },
+      config: commonConfig,
+      dimension: "2d",
+      summary: `显示满足 ${region.constraints.join("，")} 的二维积分区域。`,
+    };
+  }
+
+  const [xRange, yRange, zRange] = ranges;
+  const xValues = linspace(xRange.lowerValue, xRange.upperValue, 25);
+  const yValues = linspace(yRange.lowerValue, yRange.upperValue, 25);
+  const zValues = linspace(zRange.lowerValue, zRange.upperValue, 25);
+  const x: number[] = [];
+  const y: number[] = [];
+  const z: number[] = [];
+  const value: number[] = [];
+  const insideX: number[] = [];
+  const insideY: number[] = [];
+  const insideZ: number[] = [];
+  let index = 0;
+  for (const zValue of zValues) {
+    for (const yValue of yValues) {
+      for (const xValue of xValues) {
+        const violation = violationAt({
+          [xRange.variable]: xValue,
+          [yRange.variable]: yValue,
+          [zRange.variable]: zValue,
+        });
+        x.push(xValue);
+        y.push(yValue);
+        z.push(zValue);
+        value.push(violation);
+        if (violation <= 0 && index % 11 === 0) {
+          insideX.push(xValue);
+          insideY.push(yValue);
+          insideZ.push(zValue);
+        }
+        index += 1;
+      }
+    }
+  }
+  if (insideX.length === 0) throw new Error("当前扫描范围内没有满足全部约束的立体区域");
+  return {
+    data: [
+      {
+        type: "isosurface",
+        x,
+        y,
+        z,
+        value,
+        isomin: -tolerance * 0.5,
+        isomax: tolerance * 0.5,
+        surface: { count: 1, fill: 0.85 },
+        caps: { x: { show: false }, y: { show: false }, z: { show: false } },
+        colorscale: [[0, "#8fb2ff"], [1, BLUE]],
+        showscale: false,
+        opacity: 0.65,
+        hovertemplate: `${xRange.variable}=%{x:.3g}<br>${yRange.variable}=%{y:.3g}<br>${zRange.variable}=%{z:.3g}<extra></extra>`,
+      },
+      {
+        type: "scatter3d",
+        mode: "markers",
+        x: insideX,
+        y: insideY,
+        z: insideZ,
+        marker: { color: BLUE, opacity: 0.12, size: 2 },
+        hoverinfo: "skip",
+      },
+    ],
+    layout: {
+      ...commonLayout,
+      margin: { l: 8, r: 8, t: 12, b: 8 },
+      scene: {
+        xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+        yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+        zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+        bgcolor: "#f8fafc",
+        aspectmode: "cube",
+        camera: { eye: { x: 1.55, y: 1.55, z: 1.15 } },
+      },
+    },
+    config: commonConfig,
+    dimension: "3d",
+    summary: `显示满足 ${region.constraints.join("，")} 的三维积分区域，可拖动旋转。`,
+  };
 }
 
 async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
@@ -331,6 +478,9 @@ async function surfacePlot(spec: Extract<IntegralSpec, { type: "surface" }>) {
 
 export async function buildPlotSpec(spec: IntegralSpec): Promise<IntegralPlotSpec> {
   if (spec.type === "ordinary") return ordinaryPlot(spec);
+  if ((spec.type === "double" || spec.type === "triple") && spec.regionMode === "constraints") {
+    return constraintRegionPlot(spec);
+  }
   if (spec.type === "double") return doublePlot(spec);
   if (spec.type === "triple") return triplePlot(spec);
   if (spec.type === "line") return linePlot(spec);

@@ -156,9 +156,68 @@ def compute_numeric_integral(payload_json):
         ],
         "elapsedMs": round((time.perf_counter() - started) * 1000),
     }, ensure_ascii=False)
+
+def compute_constraint_integral(payload_json):
+    import numpy as np
+    from scipy.stats import qmc
+
+    started = time.perf_counter()
+    payload = json.loads(payload_json)
+    region = payload["constraintRegion"]
+    ranges = region["ranges"]
+    variables = [SYMBOLS[item["variable"]] for item in ranges]
+    lower = np.array([float(N(parse_math(item["lower"]))) for item in ranges])
+    upper = np.array([float(N(parse_math(item["upper"]))) for item in ranges])
+    if np.any(lower >= upper):
+        raise ValueError("扫描范围下限必须小于上限")
+
+    samples = qmc.Sobol(d=len(variables), scramble=True, seed=20260710).random_base2(m=16)
+    points = qmc.scale(samples, lower, upper)
+    arguments = tuple(points[:, index] for index in range(len(variables)))
+    mask = np.ones(points.shape[0], dtype=bool)
+    for item in region["constraints"]:
+        left = np.asarray(lambdify(tuple(variables), parse_math(item["left"]), modules=["numpy"])(*arguments))
+        right = np.asarray(lambdify(tuple(variables), parse_math(item["right"]), modules=["numpy"])(*arguments))
+        left = np.broadcast_to(left, mask.shape)
+        right = np.broadcast_to(right, mask.shape)
+        operator = item["operator"]
+        if operator in ("<=", "<"):
+            mask &= left <= right
+        elif operator in (">=", ">"):
+            mask &= left >= right
+        else:
+            tolerance = max(upper - lower) * 0.006
+            mask &= np.abs(left - right) <= tolerance
+
+    if not np.any(mask):
+        raise ValueError("当前扫描范围内没有满足全部约束的采样点")
+    expr = parse_math(payload.get("integrand", "1"))
+    function = lambdify(tuple(variables), expr, modules=["numpy"])
+    values = np.asarray(function(*arguments), dtype=float)
+    values = np.broadcast_to(values, mask.shape)
+    weighted = np.where(mask & np.isfinite(values), values, 0.0)
+    volume = float(np.prod(upper - lower))
+    estimate = volume * float(np.mean(weighted))
+    error = volume * float(np.std(weighted, ddof=1)) / np.sqrt(weighted.size)
+    return json.dumps({
+        "status": "numeric",
+        "exactLatex": None,
+        "numericValue": f"{estimate:.12g}",
+        "errorEstimate": f"{error:.3g}",
+        "steps": [
+            {"label": "条件区域被积函数", "latex": latex(expr)},
+            {"label": "Sobol 数值积分", "latex": f"{estimate:.12g}"},
+        ],
+        "elapsedMs": round((time.perf_counter() - started) * 1000),
+    }, ensure_ascii=False)
 `;
 
-type WorkerRequest = { type: "compute"; id: number; payload: ComputePayload };
+type WorkerRequest = {
+  type: "compute";
+  id: number;
+  payload: ComputePayload;
+  method: "exact" | "numeric";
+};
 type WorkerResponse =
   | { type: "status"; id: number; status: ComputeStatus }
   | { type: "result"; id: number; result: ComputeResult }
@@ -186,12 +245,27 @@ async function ensurePyodide(id: number) {
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   if (event.data.type !== "compute") return;
-  const { id, payload } = event.data;
+  const { id, payload, method } = event.data;
   try {
     const pyodide = await ensurePyodide(id);
-    post({ type: "status", id, status: "computing" });
     const payloadJson = JSON.stringify(payload);
     pyodide.globals.set("payload_json", payloadJson);
+    if (method === "numeric" || payload.constraintRegion) {
+      post({ type: "status", id, status: "loading-numerics" });
+      if (!scipyLoaded) {
+        await pyodide.loadPackage("scipy");
+        scipyLoaded = true;
+      }
+      post({ type: "status", id, status: "computing" });
+      const numericCommand = payload.constraintRegion
+        ? "compute_constraint_integral(payload_json)"
+        : "compute_numeric_integral(payload_json)";
+      const numericRaw = await pyodide.runPythonAsync(numericCommand);
+      post({ type: "result", id, result: JSON.parse(String(numericRaw)) as ComputeResult });
+      return;
+    }
+
+    post({ type: "status", id, status: "computing" });
     const raw = await pyodide.runPythonAsync("compute_integral(payload_json)");
     const response = JSON.parse(String(raw)) as { needsNumeric: boolean; result: ComputeResult };
     if (!response.needsNumeric) {

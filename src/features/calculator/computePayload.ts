@@ -1,4 +1,5 @@
 import { latexToExpression } from "./expression";
+import { parseConstraint, type ConstraintOperator } from "./constraintExpression";
 import type { IntegralSpec, VariableBound } from "./types";
 
 export interface ComputePayload {
@@ -11,6 +12,10 @@ export interface ComputePayload {
   surface?: Record<"x" | "y" | "z", string>;
   vectorField?: Record<"p" | "q" | "r", string>;
   orientation?: 1 | -1;
+  constraintRegion?: {
+    constraints: Array<{ left: string; right: string; operator: ConstraintOperator }>;
+    ranges: Array<{ variable: string; lower: string; upper: string }>;
+  };
 }
 
 const normalizeBound = (bound: VariableBound) => ({
@@ -29,6 +34,22 @@ export function createComputePayload(spec: IntegralSpec): ComputePayload {
     };
   }
   if (spec.type === "double" || spec.type === "triple") {
+    if (spec.regionMode === "constraints" && spec.constraintRegion) {
+      return {
+        ...base,
+        constraintRegion: {
+          constraints: spec.constraintRegion.constraints.map((source) => {
+            const constraint = parseConstraint(source);
+            return { left: constraint.left, right: constraint.right, operator: constraint.operator };
+          }),
+          ranges: spec.constraintRegion.ranges.map((range) => ({
+            variable: range.variable,
+            lower: latexToExpression(range.lower),
+            upper: latexToExpression(range.upper),
+          })),
+        },
+      };
+    }
     return { ...base, bounds: spec.bounds.map(normalizeBound) };
   }
   if (spec.type === "line") {

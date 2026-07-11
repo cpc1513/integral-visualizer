@@ -1,26 +1,23 @@
-import type { MathfieldElement } from "mathlive";
 import { useState } from "react";
 import { MathExpression } from "../../components/math/MathExpression";
 import { mathSymbolCategories, type SymbolCategoryId } from "./mathSymbols";
+import { useMathfieldFocus } from "./MathfieldFocusContext";
 
-interface SymbolKeyboardProps {
-  mathfield: MathfieldElement | null;
-}
-
-export function SymbolKeyboard({ mathfield }: SymbolKeyboardProps) {
+export function SymbolKeyboard() {
+  const { active } = useMathfieldFocus();
   const [activeCategory, setActiveCategory] = useState<SymbolCategoryId>("common");
   const symbols =
     mathSymbolCategories.find((category) => category.id === activeCategory)?.symbols ??
     mathSymbolCategories[0].symbols;
 
   const insert = (latex: string) => {
-    if (!mathfield) return;
-    mathfield.focus();
-    mathfield.insert(latex, { selectionMode: "placeholder", focus: true });
+    if (!active) return;
+    active.element.focus();
+    active.element.insert(latex, { selectionMode: "placeholder", focus: true });
   };
 
   return (
-    <div className="symbol-keyboard" aria-label="数学符号键盘">
+    <div className="symbol-keyboard" aria-label={`数学符号键盘，当前输入：${active?.label ?? "未选择"}`}>
       <div className="symbol-tabs" role="tablist" aria-label="数学符号分类">
         {mathSymbolCategories.map((category) => (
           <button
@@ -42,7 +39,7 @@ export function SymbolKeyboard({ mathfield }: SymbolKeyboardProps) {
             type="button"
             key={symbol.label}
             aria-label={symbol.label}
-            disabled={!mathfield}
+            disabled={!active}
             onClick={() => insert(symbol.latex)}
           >
             <MathExpression latex={symbol.preview ?? symbol.latex} />

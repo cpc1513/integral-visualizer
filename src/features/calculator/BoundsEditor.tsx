@@ -1,3 +1,4 @@
+import { Plus, Trash2 } from "lucide-react";
 import { ExpressionField } from "./ExpressionField";
 import type {
   IntegralSpec,
@@ -6,6 +7,7 @@ import type {
   OrdinaryIntegralSpec,
   SurfaceIntegralSpec,
   VariableBound,
+  ConstraintRegion,
 } from "./types";
 
 interface BoundsEditorProps {
@@ -119,6 +121,30 @@ function MultipleBounds({
   spec: MultipleIntegralSpec;
   onChange: (spec: MultipleIntegralSpec) => void;
 }) {
+  const defaultConstraintRegion = (): ConstraintRegion => {
+    const ranges = [...spec.bounds].reverse().map((bound, index) => ({
+      variable: bound.variable,
+      lower: index === 0 ? bound.lower : "-5",
+      upper: index === 0 ? bound.upper : "5",
+    }));
+    const constraints = spec.bounds.flatMap((bound) => [
+      `${bound.variable}\\ge ${bound.lower}`,
+      `${bound.variable}\\le ${bound.upper}`,
+    ]);
+    return { constraints, ranges };
+  };
+
+  const setRegionMode = (regionMode: "bounds" | "constraints") =>
+    onChange({
+      ...spec,
+      regionMode,
+      constraintRegion:
+        regionMode === "constraints" ? spec.constraintRegion ?? defaultConstraintRegion() : spec.constraintRegion,
+    });
+
+  const updateConstraintRegion = (constraintRegion: ConstraintRegion) =>
+    onChange({ ...spec, regionMode: "constraints", constraintRegion });
+
   return (
     <div className="bounds-stack">
       <ExpressionField
@@ -126,7 +152,16 @@ function MultipleBounds({
         value={spec.integrand}
         onChange={(integrand) => onChange({ ...spec, integrand })}
       />
-      {spec.bounds.map((bound, index) => (
+      <SegmentedControl
+        label="积分区域输入"
+        value={spec.regionMode === "constraints" ? "constraints" : "bounds"}
+        options={[
+          { value: "bounds", label: "累次上下界" },
+          { value: "constraints", label: "条件区域" },
+        ]}
+        onChange={setRegionMode}
+      />
+      {spec.regionMode !== "constraints" ? spec.bounds.map((bound, index) => (
         <BoundRow
           key={`${bound.label}-${index}`}
           bound={bound}
@@ -137,7 +172,73 @@ function MultipleBounds({
             onChange({ ...spec, bounds });
           }}
         />
-      ))}
+      )) : (
+        <div className="constraint-editor">
+          {(spec.constraintRegion ?? defaultConstraintRegion()).constraints.map((constraint, index) => (
+            <div className="constraint-row" key={`constraint-${index}`}>
+              <ExpressionField
+                label={`约束 ${index + 1}`}
+                value={constraint}
+                onChange={(value) => {
+                  const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
+                  region.constraints[index] = value;
+                  updateConstraintRegion(region);
+                }}
+              />
+              <button
+                type="button"
+                className="icon-button constraint-delete"
+                aria-label={`删除约束 ${index + 1}`}
+                disabled={(spec.constraintRegion ?? defaultConstraintRegion()).constraints.length <= 1}
+                onClick={() => {
+                  const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
+                  region.constraints.splice(index, 1);
+                  updateConstraintRegion(region);
+                }}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="add-constraint-button"
+            onClick={() => {
+              const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
+              region.constraints.push(spec.type === "double" ? "x+y\\le 1" : "z\\ge 0");
+              updateConstraintRegion(region);
+            }}
+          >
+            <Plus size={14} aria-hidden="true" />
+            添加约束
+          </button>
+          <div className="constraint-ranges">
+            {(spec.constraintRegion ?? defaultConstraintRegion()).ranges.map((range, index) => (
+              <div className="range-row" key={`${range.variable}-${index}`}>
+                <span>{range.variable} 扫描范围</span>
+                <ExpressionField
+                  label="最小值"
+                  value={range.lower}
+                  onChange={(lower) => {
+                    const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
+                    region.ranges[index].lower = lower;
+                    updateConstraintRegion(region);
+                  }}
+                />
+                <ExpressionField
+                  label="最大值"
+                  value={range.upper}
+                  onChange={(upper) => {
+                    const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
+                    region.ranges[index].upper = upper;
+                    updateConstraintRegion(region);
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

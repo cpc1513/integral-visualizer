@@ -1,11 +1,11 @@
 import { createComputePayload } from "./computePayload";
-import type { ComputeResult, ComputeStatus, IntegralSpec } from "./types";
+import type { ComputeMethod, ComputeResult, ComputeStatus, IntegralSpec } from "./types";
 
 type PendingRequest = {
   resolve: (value: ComputeResult) => void;
   reject: (reason: Error) => void;
   onStatus: (status: ComputeStatus) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  loadingTimeout: ReturnType<typeof setTimeout>;
 };
 
 type WorkerMessage =
@@ -17,12 +17,14 @@ let worker: Worker | null = null;
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingRequest>();
 
+export class ComputationCancelledError extends Error {}
+
 function resetWorker(reason?: Error) {
   worker?.terminate();
   worker = null;
   if (reason) {
     for (const request of pendingRequests.values()) {
-      clearTimeout(request.timeout);
+      clearTimeout(request.loadingTimeout);
       request.reject(reason);
     }
     pendingRequests.clear();
@@ -39,14 +41,11 @@ function getWorker() {
     if (message.type === "status") {
       pending.onStatus(message.status);
       if (message.status === "computing") {
-        clearTimeout(pending.timeout);
-        pending.timeout = setTimeout(() => {
-          resetWorker(new Error("符号计算超过 20 秒，已安全停止。请简化表达式或改用更明确的边界。"));
-        }, 20_000);
+        clearTimeout(pending.loadingTimeout);
       }
       return;
     }
-    clearTimeout(pending.timeout);
+    clearTimeout(pending.loadingTimeout);
     pendingRequests.delete(message.id);
     if (message.type === "result") pending.resolve(message.result);
     else pending.reject(new Error(message.error || "Python 计算失败"));
@@ -58,13 +57,25 @@ function getWorker() {
 export function computeIntegral(
   spec: IntegralSpec,
   onStatus: (status: ComputeStatus) => void,
+  method: ComputeMethod = "auto",
 ): Promise<ComputeResult> {
   const id = nextRequestId++;
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const loadingTimeout = setTimeout(() => {
       resetWorker(new Error("Python 运行时加载超时，请检查网络后重试。"));
-    }, 90_000);
-    pendingRequests.set(id, { resolve, reject, onStatus, timeout });
-    getWorker().postMessage({ type: "compute", id, payload: createComputePayload(spec) });
+    }, 180_000);
+    pendingRequests.set(id, { resolve, reject, onStatus, loadingTimeout });
+    getWorker().postMessage({
+      type: "compute",
+      id,
+      payload: createComputePayload(spec),
+      method: method === "auto" ? spec.preferredComputeMode ?? "exact" : method,
+    });
   });
+}
+
+export function cancelActiveComputation() {
+  if (pendingRequests.size === 0) return false;
+  resetWorker(new ComputationCancelledError("计算已由用户停止"));
+  return true;
 }
