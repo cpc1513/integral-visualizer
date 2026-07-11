@@ -46,6 +46,8 @@ export interface MultipleIntegralSpec<T extends "double" | "triple" = "double" |
 export interface LineIntegralSpec extends BaseIntegralSpec {
   type: "line";
   mode: "scalar" | "work";
+  regionMode?: "parameter" | "constraints";
+  constraintRegion?: ConstraintRegion;
   parameter: VariableBound;
   path: { x: string; y: string; z: string };
   vectorField: { p: string; q: string; r: string };
@@ -54,6 +56,8 @@ export interface LineIntegralSpec extends BaseIntegralSpec {
 export interface SurfaceIntegralSpec extends BaseIntegralSpec {
   type: "surface";
   mode: "scalar" | "flux";
+  regionMode?: "parameter" | "constraints";
+  constraintRegion?: ConstraintRegion;
   parameters: [VariableBound, VariableBound];
   surface: { x: string; y: string; z: string };
   vectorField: { p: string; q: string; r: string };

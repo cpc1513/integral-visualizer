@@ -1,5 +1,5 @@
-import { Plus, Trash2 } from "lucide-react";
 import { ExpressionField } from "./ExpressionField";
+import { ConstraintRegionEditor } from "./ConstraintRegionEditor";
 import type {
   IntegralSpec,
   LineIntegralSpec,
@@ -9,6 +9,66 @@ import type {
   VariableBound,
   ConstraintRegion,
 } from "./types";
+
+const emptyCartesianRegion = (variables: string[]): ConstraintRegion => ({
+  constraints: [],
+  ranges: variables.map((variable) => ({ variable, lower: "-5", upper: "5" })),
+});
+
+const boundsToConstraintRegion = (bounds: VariableBound[]): ConstraintRegion => ({
+  constraints: bounds.flatMap((bound) => [
+    `${bound.variable}\\ge ${bound.lower}`,
+    `${bound.variable}\\le ${bound.upper}`,
+  ]),
+  ranges: [...bounds].reverse().map((bound, index) => ({
+    variable: bound.variable,
+    lower: index === 0 ? bound.lower : "-5",
+    upper: index === 0 ? bound.upper : "5",
+  })),
+});
+
+const compactLatex = (value: string) => value.replace(/\s+/g, "").replace(/[{}]/g, "");
+
+export function convertLineParameter(spec: LineIntegralSpec): ConstraintRegion | null {
+  const parameter = compactLatex(spec.parameter.variable);
+  const x = compactLatex(spec.path.x);
+  const y = compactLatex(spec.path.y);
+  const z = compactLatex(spec.path.z);
+  const isUnitCircle =
+    (x === `\\cos${parameter}` && y === `\\sin${parameter}`)
+    || (x === `cos${parameter}` && y === `sin${parameter}`);
+  if (!isUnitCircle || z.includes(parameter)) return null;
+  return {
+    constraints: ["x^2+y^2=1", `z=${spec.path.z}`],
+    ranges: [
+      { variable: "x", lower: "-1.2", upper: "1.2" },
+      { variable: "y", lower: "-1.2", upper: "1.2" },
+      { variable: "z", lower: "-1", upper: "1" },
+    ],
+  };
+}
+
+export function convertSurfaceParameter(spec: SurfaceIntegralSpec): ConstraintRegion | null {
+  const [radial, angular] = spec.parameters;
+  const u = compactLatex(radial.variable);
+  const v = compactLatex(angular.variable);
+  const x = compactLatex(spec.surface.x);
+  const y = compactLatex(spec.surface.y);
+  const radialForm =
+    (x === `${u}\\cos${v}` && y === `${u}\\sin${v}`)
+    || (x === `${u}cos${v}` && y === `${u}sin${v}`);
+  const z = compactLatex(spec.surface.z);
+  if (!radialForm || !z.includes(`${u}^2`)) return null;
+  const implicitZ = z.replaceAll(`${u}^2`, "(x^2+y^2)");
+  return {
+    constraints: [`z=${implicitZ}`, `x^2+y^2\\le(${radial.upper})^2`],
+    ranges: [
+      { variable: "x", lower: `-${radial.upper}`, upper: radial.upper },
+      { variable: "y", lower: `-${radial.upper}`, upper: radial.upper },
+      { variable: "z", lower: "-5", upper: "5" },
+    ],
+  };
+}
 
 interface BoundsEditorProps {
   spec: IntegralSpec;
@@ -121,25 +181,15 @@ function MultipleBounds({
   spec: MultipleIntegralSpec;
   onChange: (spec: MultipleIntegralSpec) => void;
 }) {
-  const defaultConstraintRegion = (): ConstraintRegion => {
-    const ranges = [...spec.bounds].reverse().map((bound, index) => ({
-      variable: bound.variable,
-      lower: index === 0 ? bound.lower : "-5",
-      upper: index === 0 ? bound.upper : "5",
-    }));
-    const constraints = spec.bounds.flatMap((bound) => [
-      `${bound.variable}\\ge ${bound.lower}`,
-      `${bound.variable}\\le ${bound.upper}`,
-    ]);
-    return { constraints, ranges };
-  };
+  const emptyRegion = () =>
+    emptyCartesianRegion([...spec.bounds].reverse().map((bound) => bound.variable));
 
   const setRegionMode = (regionMode: "bounds" | "constraints") =>
     onChange({
       ...spec,
       regionMode,
       constraintRegion:
-        regionMode === "constraints" ? spec.constraintRegion ?? defaultConstraintRegion() : spec.constraintRegion,
+        regionMode === "constraints" ? spec.constraintRegion ?? emptyRegion() : spec.constraintRegion,
     });
 
   const updateConstraintRegion = (constraintRegion: ConstraintRegion) =>
@@ -173,71 +223,13 @@ function MultipleBounds({
           }}
         />
       )) : (
-        <div className="constraint-editor">
-          {(spec.constraintRegion ?? defaultConstraintRegion()).constraints.map((constraint, index) => (
-            <div className="constraint-row" key={`constraint-${index}`}>
-              <ExpressionField
-                label={`约束 ${index + 1}`}
-                value={constraint}
-                onChange={(value) => {
-                  const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
-                  region.constraints[index] = value;
-                  updateConstraintRegion(region);
-                }}
-              />
-              <button
-                type="button"
-                className="icon-button constraint-delete"
-                aria-label={`删除约束 ${index + 1}`}
-                disabled={(spec.constraintRegion ?? defaultConstraintRegion()).constraints.length <= 1}
-                onClick={() => {
-                  const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
-                  region.constraints.splice(index, 1);
-                  updateConstraintRegion(region);
-                }}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="add-constraint-button"
-            onClick={() => {
-              const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
-              region.constraints.push(spec.type === "double" ? "x+y\\le 1" : "z\\ge 0");
-              updateConstraintRegion(region);
-            }}
-          >
-            <Plus size={14} aria-hidden="true" />
-            添加约束
-          </button>
-          <div className="constraint-ranges">
-            {(spec.constraintRegion ?? defaultConstraintRegion()).ranges.map((range, index) => (
-              <div className="range-row" key={`${range.variable}-${index}`}>
-                <span>{range.variable} 扫描范围</span>
-                <ExpressionField
-                  label="最小值"
-                  value={range.lower}
-                  onChange={(lower) => {
-                    const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
-                    region.ranges[index].lower = lower;
-                    updateConstraintRegion(region);
-                  }}
-                />
-                <ExpressionField
-                  label="最大值"
-                  value={range.upper}
-                  onChange={(upper) => {
-                    const region = structuredClone(spec.constraintRegion ?? defaultConstraintRegion());
-                    region.ranges[index].upper = upper;
-                    updateConstraintRegion(region);
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
+        <ConstraintRegionEditor
+          region={spec.constraintRegion ?? emptyRegion()}
+          onChange={updateConstraintRegion}
+          hint={spec.type === "double" ? "添加如 x^2+y^2\\le1 的区域条件。" : "添加定义立体区域的等式或不等式。"}
+          convertLabel="从当前上下界转换"
+          onConvert={() => updateConstraintRegion(boundsToConstraintRegion(spec.bounds))}
+        />
       )}
     </div>
   );
@@ -252,6 +244,9 @@ function LineBounds({
 }) {
   const updatePath = (axis: "x" | "y" | "z", value: string) =>
     onChange({ ...spec, path: { ...spec.path, [axis]: value } });
+  const emptyRegion = () => emptyCartesianRegion(["x", "y", "z"]);
+  const regionMode = spec.regionMode === "constraints" ? "constraints" : "parameter";
+  const convertedRegion = convertLineParameter(spec);
   return (
     <div className="bounds-stack">
       <SegmentedControl
@@ -283,20 +278,45 @@ function LineBounds({
           ))}
         </div>
       )}
-      <div className="coordinate-grid">
-        {(["x", "y", "z"] as const).map((axis) => (
-          <ExpressionField
-            key={axis}
-            label={`${axis}(${spec.parameter.variable})`}
-            value={spec.path[axis]}
-            onChange={(value) => updatePath(axis, value)}
-          />
-        ))}
-      </div>
-      <BoundRow
-        bound={spec.parameter}
-        onChange={(parameter) => onChange({ ...spec, parameter })}
+      <SegmentedControl
+        label="曲线输入方式"
+        value={regionMode}
+        options={[
+          { value: "parameter", label: "参数方程" },
+          { value: "constraints", label: "隐式条件" },
+        ]}
+        onChange={(nextMode) => onChange({
+          ...spec,
+          regionMode: nextMode,
+          constraintRegion: nextMode === "constraints" ? spec.constraintRegion ?? emptyRegion() : spec.constraintRegion,
+        })}
       />
+      {regionMode === "parameter" ? (
+        <>
+          <div className="coordinate-grid">
+            {(["x", "y", "z"] as const).map((axis) => (
+              <ExpressionField
+                key={axis}
+                label={`${axis}(${spec.parameter.variable})`}
+                value={spec.path[axis]}
+                onChange={(value) => updatePath(axis, value)}
+              />
+            ))}
+          </div>
+          <BoundRow
+            bound={spec.parameter}
+            onChange={(parameter) => onChange({ ...spec, parameter })}
+          />
+        </>
+      ) : (
+        <ConstraintRegionEditor
+          region={spec.constraintRegion ?? emptyRegion()}
+          onChange={(constraintRegion) => onChange({ ...spec, regionMode: "constraints", constraintRegion })}
+          hint="通常输入两个独立等式确定交线，再用不等式截取曲线。"
+          convertLabel="从当前参数方程转换"
+          onConvert={convertedRegion ? () => onChange({ ...spec, regionMode: "constraints", constraintRegion: convertedRegion }) : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -308,6 +328,9 @@ function SurfaceBounds({
   spec: SurfaceIntegralSpec;
   onChange: (spec: SurfaceIntegralSpec) => void;
 }) {
+  const emptyRegion = () => emptyCartesianRegion(["x", "y", "z"]);
+  const regionMode = spec.regionMode === "constraints" ? "constraints" : "parameter";
+  const convertedRegion = convertSurfaceParameter(spec);
   return (
     <div className="bounds-stack">
       <SegmentedControl
@@ -339,29 +362,54 @@ function SurfaceBounds({
           ))}
         </div>
       )}
-      <div className="coordinate-grid">
-        {(["x", "y", "z"] as const).map((axis) => (
-          <ExpressionField
-            key={axis}
-            label={`${axis}(${spec.parameters[0].variable},${spec.parameters[1].variable})`}
-            value={spec.surface[axis]}
-            onChange={(value) =>
-              onChange({ ...spec, surface: { ...spec.surface, [axis]: value } })
-            }
-          />
-        ))}
-      </div>
-      {spec.parameters.map((parameter, index) => (
-        <BoundRow
-          key={parameter.label}
-          bound={parameter}
-          onChange={(next) => {
-            const parameters = [...spec.parameters] as [VariableBound, VariableBound];
-            parameters[index] = next;
-            onChange({ ...spec, parameters });
-          }}
+      <SegmentedControl
+        label="曲面输入方式"
+        value={regionMode}
+        options={[
+          { value: "parameter", label: "参数曲面" },
+          { value: "constraints", label: "隐式条件" },
+        ]}
+        onChange={(nextMode) => onChange({
+          ...spec,
+          regionMode: nextMode,
+          constraintRegion: nextMode === "constraints" ? spec.constraintRegion ?? emptyRegion() : spec.constraintRegion,
+        })}
+      />
+      {regionMode === "parameter" ? (
+        <>
+          <div className="coordinate-grid">
+            {(["x", "y", "z"] as const).map((axis) => (
+              <ExpressionField
+                key={axis}
+                label={`${axis}(${spec.parameters[0].variable},${spec.parameters[1].variable})`}
+                value={spec.surface[axis]}
+                onChange={(value) =>
+                  onChange({ ...spec, surface: { ...spec.surface, [axis]: value } })
+                }
+              />
+            ))}
+          </div>
+          {spec.parameters.map((parameter, index) => (
+            <BoundRow
+              key={parameter.label}
+              bound={parameter}
+              onChange={(next) => {
+                const parameters = [...spec.parameters] as [VariableBound, VariableBound];
+                parameters[index] = next;
+                onChange({ ...spec, parameters });
+              }}
+            />
+          ))}
+        </>
+      ) : (
+        <ConstraintRegionEditor
+          region={spec.constraintRegion ?? emptyRegion()}
+          onChange={(constraintRegion) => onChange({ ...spec, regionMode: "constraints", constraintRegion })}
+          hint="至少输入一个等式定义曲面，再用不等式截取所需部分。"
+          convertLabel="从当前参数曲面转换"
+          onConvert={convertedRegion ? () => onChange({ ...spec, regionMode: "constraints", constraintRegion: convertedRegion }) : undefined}
         />
-      ))}
+      )}
       <SegmentedControl
         label="曲面方向"
         value={spec.orientation === 1 ? "positive" : "negative"}

@@ -12,7 +12,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
   const plotHostRef = useRef<HTMLDivElement>(null);
   const plotlyRef = useRef<typeof import("plotly.js-dist-min") | null>(null);
   const dimensionRef = useRef<"2d" | "3d">("3d");
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [state, setState] = useState<"empty" | "loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [summary, setSummary] = useState("正在建立积分区域模型。");
 
@@ -20,8 +20,20 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     let cancelled = false;
     const host = plotHostRef.current;
     if (!host) return;
+    const isEmptyConstraintRegion =
+      "regionMode" in spec
+      && spec.regionMode === "constraints"
+      && (!spec.constraintRegion || spec.constraintRegion.constraints.every((constraint) => !constraint.trim()));
+    if (isEmptyConstraintRegion) {
+      plotlyRef.current?.purge(host);
+      setSummary("添加条件后将在这里显示积分区域。");
+      setError("");
+      setState("empty");
+      return;
+    }
     setState("loading");
     setError("");
+    plotlyRef.current?.purge(host);
 
     Promise.all([import("plotly.js-dist-min"), buildPlotSpec(spec)])
       .then(async ([plotlyModule, plotSpec]) => {
@@ -92,6 +104,9 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
       </div>
       <div className="plot-stage" data-state={state}>
         <div ref={plotHostRef} className="plot-host" aria-label={summary} />
+        {state === "empty" ? (
+          <div className="plot-status">添加条件后，将在这里显示积分区域</div>
+        ) : null}
         {state === "loading" ? <div className="plot-status">正在生成区域…</div> : null}
         {state === "error" ? (
           <div className="plot-error" role="alert">

@@ -418,6 +418,44 @@ math-field:focus-visible {
   gap: 6px;
 }
 
+.constraint-editor-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px dashed #bfd0e8;
+  border-radius: 9px;
+  background: #f8fbff;
+  flex-wrap: wrap;
+}
+
+.constraint-editor-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.convert-region-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #b9cdf0;
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.convert-region-button:hover {
+  border-color: var(--blue);
+  background: #f1f6ff;
+}
+
 .constraint-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 30px;

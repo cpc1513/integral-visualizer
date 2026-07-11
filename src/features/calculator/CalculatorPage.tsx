@@ -11,7 +11,7 @@ import { MathfieldFocusProvider } from "./MathfieldFocusContext";
 import type { ComputeMethod, ComputeResult, ComputeStatus, IntegralSpec, IntegralType } from "./types";
 import { VisualizationCanvas } from "../visualization/VisualizationCanvas";
 
-const STORAGE_KEY = "integral-visualizer:calculator:v1";
+const STORAGE_KEY = "integral-visualizer:calculator:v2";
 
 const seededResults: Record<IntegralType, ComputeResult> = {
   ordinary: {
@@ -143,6 +143,11 @@ export function CalculatorPage() {
   }, []);
 
   const compute = async (method: ComputeMethod = "auto") => {
+    if ((activeSpec.type === "line" || activeSpec.type === "surface") && activeSpec.regionMode === "constraints") {
+      setStatus("error");
+      setError("区域已可视化；当前隐式条件需要参数方程后才能计算。切换回参数形式即可继续求值。");
+      return;
+    }
     const requestVersion = ++requestVersionRef.current;
     const resolvedMethod: ComputeMethod =
       (activeSpec.type === "double" || activeSpec.type === "triple") && activeSpec.regionMode === "constraints"

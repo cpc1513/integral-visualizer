@@ -206,10 +206,7 @@ async function constraintRegionPlot(
   const y: number[] = [];
   const z: number[] = [];
   const value: number[] = [];
-  const insideX: number[] = [];
-  const insideY: number[] = [];
-  const insideZ: number[] = [];
-  let index = 0;
+  let insideCount = 0;
   for (const zValue of zValues) {
     for (const yValue of yValues) {
       for (const xValue of xValues) {
@@ -222,16 +219,11 @@ async function constraintRegionPlot(
         y.push(yValue);
         z.push(zValue);
         value.push(violation);
-        if (violation <= 0 && index % 11 === 0) {
-          insideX.push(xValue);
-          insideY.push(yValue);
-          insideZ.push(zValue);
-        }
-        index += 1;
+        if (violation <= 0) insideCount += 1;
       }
     }
   }
-  if (insideX.length === 0) throw new Error("当前扫描范围内没有满足全部约束的立体区域");
+  if (insideCount === 0) throw new Error("当前扫描范围内没有满足全部约束的立体区域");
   return {
     data: [
       {
@@ -246,17 +238,10 @@ async function constraintRegionPlot(
         caps: { x: { show: false }, y: { show: false }, z: { show: false } },
         colorscale: [[0, "#8fb2ff"], [1, BLUE]],
         showscale: false,
-        opacity: 0.65,
+        opacity: 0.82,
+        flatshading: false,
+        lighting: { ambient: 0.9, diffuse: 0.45, roughness: 0.9, specular: 0.08, fresnel: 0.04 },
         hovertemplate: `${xRange.variable}=%{x:.3g}<br>${yRange.variable}=%{y:.3g}<br>${zRange.variable}=%{z:.3g}<extra></extra>`,
-      },
-      {
-        type: "scatter3d",
-        mode: "markers",
-        x: insideX,
-        y: insideY,
-        z: insideZ,
-        marker: { color: BLUE, opacity: 0.12, size: 2 },
-        hoverinfo: "skip",
       },
     ],
     layout: {
@@ -274,6 +259,123 @@ async function constraintRegionPlot(
     config: commonConfig,
     dimension: "3d",
     summary: `显示满足 ${region.constraints.join("，")} 的三维积分区域，可拖动旋转。`,
+  };
+}
+
+async function implicitRegionPlot(
+  spec: Extract<IntegralSpec, { type: "line" | "surface" }>,
+): Promise<IntegralPlotSpec> {
+  const region = spec.constraintRegion;
+  if (!region || region.constraints.length === 0) {
+    throw new Error(spec.type === "line" ? "请添加定义曲线的隐式条件" : "请添加定义曲面的隐式条件");
+  }
+  if (region.ranges.length !== 3) throw new Error("隐式曲线和曲面需要 x、y、z 三个扫描范围");
+  const parsed = region.constraints.map(parseConstraint);
+  const equalities = parsed.filter((constraint) => constraint.operator === "=");
+  if (spec.type === "line" && equalities.length < 2) throw new Error("隐式曲线通常需要两个独立等式");
+  if (spec.type === "surface" && equalities.length < 1) throw new Error("隐式曲面至少需要一个等式");
+  const evaluators = await Promise.all(parsed.map(async (constraint) => ({
+    constraint,
+    left: await createEvaluator(constraint.left),
+    right: await createEvaluator(constraint.right),
+  })));
+  const ranges = await Promise.all(region.ranges.map(async (range) => {
+    const [lower, upper] = await evaluateBound(range);
+    if (lower >= upper) throw new Error(`${range.variable} 的扫描范围下限必须小于上限`);
+    return { ...range, lowerValue: lower, upperValue: upper };
+  }));
+  const [xRange, yRange, zRange] = ranges;
+  const maxSpan = Math.max(...ranges.map((range) => range.upperValue - range.lowerValue));
+  const equalityTolerance = maxSpan * (spec.type === "line" ? 0.035 : 0.008);
+  const evaluateAll = (scope: Record<string, number>) => evaluators.map(({ constraint, left, right }) => ({
+    constraint,
+    left: left(scope),
+    right: right(scope),
+  }));
+  const satisfiesInequalities = (values: ReturnType<typeof evaluateAll>) =>
+    values.every(({ constraint, left, right }) =>
+      constraint.operator === "=" || constraintViolation(constraint, left, right, equalityTolerance) <= 0,
+    );
+
+  if (spec.type === "surface") {
+    const count = 31;
+    const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
+    const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
+    const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
+    const x: number[] = [];
+    const y: number[] = [];
+    const z: number[] = [];
+    const value: Array<number | null> = [];
+    let visibleSamples = 0;
+    for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
+      const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
+      const primary = values.find(({ constraint }) => constraint.operator === "=")!;
+      const allowed = satisfiesInequalities(values);
+      x.push(xValue); y.push(yValue); z.push(zValue);
+      value.push(allowed ? primary.left - primary.right : null);
+      if (allowed && Math.abs(primary.left - primary.right) <= equalityTolerance * 2) visibleSamples += 1;
+    }
+    if (visibleSamples === 0) throw new Error("当前扫描范围内没有找到满足条件的曲面");
+    return {
+      data: [{
+        type: "isosurface", x, y, z, value, isomin: 0, isomax: 0,
+        surface: { count: 1, fill: 0.9 },
+        caps: { x: { show: false }, y: { show: false }, z: { show: false } },
+        colorscale: [[0, "#9bbcff"], [1, BLUE]], showscale: false, opacity: 0.82,
+        flatshading: false,
+        lighting: { ambient: 0.9, diffuse: 0.45, roughness: 0.9, specular: 0.08, fresnel: 0.04 },
+        hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",
+      }],
+      layout: {
+        ...commonLayout, margin: { l: 8, r: 8, t: 12, b: 8 },
+        scene: {
+          xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+          yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+          zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+          bgcolor: "#f8fafc", aspectmode: "data",
+          camera: { eye: { x: 1.45, y: 1.5, z: 1.1 } },
+        },
+      },
+      config: commonConfig, dimension: "3d",
+      summary: `显示满足 ${region.constraints.join("，")} 的隐式曲面，可拖动旋转。`,
+    };
+  }
+
+  const count = 45;
+  const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
+  const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
+  const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
+  const x: number[] = [];
+  const y: number[] = [];
+  const z: number[] = [];
+  for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
+    const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
+    const equalityValues = values.filter(({ constraint }) => constraint.operator === "=");
+    if (
+      satisfiesInequalities(values)
+      && equalityValues.every(({ left, right }) => Math.abs(left - right) <= equalityTolerance)
+    ) {
+      x.push(xValue); y.push(yValue); z.push(zValue);
+    }
+  }
+  if (x.length === 0) throw new Error("当前扫描范围内没有找到两曲面的交线，请适当缩小范围");
+  return {
+    data: [{
+      type: "scatter3d", mode: "markers", x, y, z,
+      marker: { color: BLUE, size: 3.5, opacity: 0.9 },
+      hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",
+    }],
+    layout: {
+      ...commonLayout, margin: { l: 8, r: 8, t: 12, b: 8 },
+      scene: {
+        xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+        yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+        zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+        bgcolor: "#f8fafc", aspectmode: "data",
+      },
+    },
+    config: commonConfig, dimension: "3d",
+    summary: `显示满足 ${region.constraints.join("，")} 的隐式曲线，可拖动旋转。`,
   };
 }
 
@@ -483,6 +585,9 @@ export async function buildPlotSpec(spec: IntegralSpec): Promise<IntegralPlotSpe
   }
   if (spec.type === "double") return doublePlot(spec);
   if (spec.type === "triple") return triplePlot(spec);
+  if ((spec.type === "line" || spec.type === "surface") && spec.regionMode === "constraints") {
+    return implicitRegionPlot(spec);
+  }
   if (spec.type === "line") return linePlot(spec);
   return surfacePlot(spec);
 }
