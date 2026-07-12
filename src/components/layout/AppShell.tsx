@@ -1,9 +1,10 @@
-import { Calculator, LibraryBig } from "lucide-react";
+import { Calculator, LibraryBig, MonitorCheck } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 const navigation = [
   { to: "/", label: "在线计算", icon: Calculator, end: true },
   { to: "/exams", label: "往年真题", icon: LibraryBig, end: false },
+  { to: "/computer-exams", label: "机考题库", icon: MonitorCheck, end: false },
 ] as const;
 
 export function AppShell() {

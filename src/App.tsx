@@ -8,6 +8,7 @@ const PastExamsPage = lazy(() =>
     default: module.PastExamsPage,
   })),
 );
+const ComputerExamsPage = lazy(() => import("./features/questions/ComputerExamsPage").then((module) => ({ default: module.ComputerExamsPage })));
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
               </Suspense>
             }
           />
+          <Route path="computer-exams" element={<Suspense fallback={<div className="route-loading">正在载入机考题库…</div>}><ComputerExamsPage /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

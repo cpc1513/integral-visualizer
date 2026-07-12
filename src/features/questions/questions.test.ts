@@ -5,6 +5,7 @@ import { latexToExpression } from "../calculator/expression";
 import { buildPlotSpec } from "../visualization/plotSpec";
 import type { QuestionDataset } from "./types";
 import { visualizableDataset } from "./visualizableQuestions";
+import { computerExamDataset } from "./computerExamQuestions";
 
 const dataset = questionData as QuestionDataset;
 
@@ -73,4 +74,18 @@ describe("generated exam dataset", () => {
       }
     }
   });
+});
+
+describe("computer exam dataset", () => {
+  it("contains only plots that can be built directly", async () => {
+    const failures: string[] = [];
+    for (const question of computerExamDataset.questions) {
+      try {
+        await buildPlotSpec(question.visualizationSpec);
+      } catch (error) {
+        failures.push(`${question.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  }, 60_000);
 });

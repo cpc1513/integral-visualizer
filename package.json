@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "generate:computer-exams": "node scripts/generate_computer_exams.mjs ../1766137194_第八章/可视化积分区域题目汇总.md",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

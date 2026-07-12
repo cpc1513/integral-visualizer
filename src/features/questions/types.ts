@@ -42,3 +42,30 @@ export interface QuestionDataset {
 export interface VisualizableQuestionDataset extends Omit<QuestionDataset, "questions"> {
   questions: VisualizableExamQuestion[];
 }
+
+export interface ComputerExamQuestion {
+  id: string;
+  topic: string;
+  topicCode: string;
+  ordinal: number;
+  page: number;
+  integralType: IntegralType;
+  prompt: RichTextBlock[];
+  region: RichTextBlock[];
+  answer: string;
+  solution: RichTextBlock[];
+  visualizationSpec: IntegralSpec;
+}
+
+export interface ComputerExamDataset {
+  meta: {
+    title: string;
+    sourceFile: string;
+    sourceCount: number;
+    importedCount: number;
+    excludedCount: number;
+    topicCounts: Record<string, number>;
+    exclusions: Record<string, number>;
+  };
+  questions: ComputerExamQuestion[];
+}

@@ -1,19 +1,9 @@
-import { AlertCircle, ArrowUpRight, BookOpenText, Filter, Search } from "lucide-react";
+import { Filter, Search } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type { IntegralType } from "../calculator/types";
-import { RichQuestionText } from "./RichQuestionText";
 import type { RichTextBlock, VisualizableExamQuestion } from "./types";
 import { visualizableDataset as dataset } from "./visualizableQuestions";
-
-
-const typeLabels: Record<IntegralType, string> = {
-  ordinary: "普通积分",
-  double: "二重积分",
-  triple: "三重积分",
-  line: "曲线积分",
-  surface: "曲面积分",
-};
+import { QuestionCard, typeLabels } from "./QuestionCard";
 
 function blocksToText(blocks: RichTextBlock[]) {
   return blocks.flatMap((block) => block.map((segment) => segment.value)).join(" ");
@@ -35,59 +25,17 @@ const searchIndex = new Map(
 );
 
 function QuestionItem({ question }: { question: VisualizableExamQuestion }) {
-  const navigate = useNavigate();
   return (
-    <article className="question-row">
-      <div className="question-index" aria-hidden="true">
-        {String(question.ordinal).padStart(2, "0")}
-      </div>
-      <div className="question-body">
-        <div className="question-meta">
-          <span>{question.academicYear}</span>
-          <span>{question.sourceLabel}</span>
-          {question.score ? <span>{question.score} 分</span> : null}
-          <span className="question-type">{typeLabels[question.integralType]}</span>
-        </div>
-        <h2>{question.knowledge || "来源汇总说明"}</h2>
-        {question.prompt.length ? (
-          <RichQuestionText blocks={question.prompt} />
-        ) : (
-          <p className="missing-prompt">原文未提供完整题面。</p>
-        )}
-        {question.warnings.length ? (
-          <div className="source-warning">
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>来源提示：{question.warnings.join("、")}</span>
-          </div>
-        ) : null}
-        <div className="question-actions">
-          <details className="solution-disclosure">
-            <summary>
-              <BookOpenText size={16} aria-hidden="true" />
-              查看原解答
-            </summary>
-            <div className="solution-content">
-              {question.solution.length ? (
-                <RichQuestionText blocks={question.solution} />
-              ) : (
-                <p>原文未提供解答。</p>
-              )}
-            </div>
-          </details>
-          <button
-            type="button"
-            className="load-calculator-button"
-            onClick={() =>
-              navigate("/", { state: { visualizationSpec: question.visualizationSpec } })
-            }
-            title="把本题公式与积分区域载入在线计算台"
-          >
-            一键在计算台可视化
-            <ArrowUpRight size={15} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </article>
+    <QuestionCard
+      ordinal={question.ordinal}
+      meta={[question.academicYear, question.sourceLabel, ...(question.score ? [`${question.score} 分`] : [])]}
+      title={question.knowledge || "来源汇总说明"}
+      integralType={question.integralType}
+      prompt={question.prompt}
+      solution={question.solution}
+      warnings={question.warnings}
+      visualizationSpec={question.visualizationSpec}
+    />
   );
 }
 
