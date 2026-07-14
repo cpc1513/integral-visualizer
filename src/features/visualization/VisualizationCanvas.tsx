@@ -1,8 +1,9 @@
 import { MousePointer2, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Data } from "plotly.js";
 import type { IntegralSpec } from "../calculator/types";
-import { buildPlotSpec } from "./plotSpec";
+import { buildPlotSpec, type IntegralPlotSpec, type ThreeScalarField } from "./plotSpec";
+import { ThreeIsosurfaceCanvas } from "./ThreeIsosurfaceCanvas";
 
 interface VisualizationCanvasProps {
   spec: IntegralSpec;
@@ -12,12 +13,27 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
   const plotHostRef = useRef<HTMLDivElement>(null);
   const plotlyRef = useRef<typeof import("plotly.js-dist-min") | null>(null);
   const dimensionRef = useRef<"2d" | "3d">("3d");
+  const renderVersionRef = useRef(0);
+  const fallbackPlotRef = useRef<IntegralPlotSpec | null>(null);
+  const threeResetRef = useRef<(() => void) | null>(null);
+  const [threeField, setThreeField] = useState<ThreeScalarField | null>(null);
   const [state, setState] = useState<"empty" | "loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [summary, setSummary] = useState("正在建立积分区域模型。");
 
+  const renderWithPlotly = useCallback(async (plotSpec: IntegralPlotSpec, version: number) => {
+    const host = plotHostRef.current;
+    if (!host) throw new Error("绘图容器尚未准备好");
+    const plotlyModule = await import("plotly.js-dist-min");
+    if (version !== renderVersionRef.current) return;
+    const Plotly = plotlyModule.default ?? plotlyModule;
+    plotlyRef.current = Plotly;
+    await Plotly.react(host, plotSpec.data as Data[], plotSpec.layout, plotSpec.config);
+    if (version === renderVersionRef.current) setState("ready");
+  }, []);
+
   useEffect(() => {
-    let cancelled = false;
+    const version = ++renderVersionRef.current;
     const host = plotHostRef.current;
     if (!host) return;
     const isEmptyConstraintRegion =
@@ -26,42 +42,49 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
       && (!spec.constraintRegion || spec.constraintRegion.constraints.every((constraint) => !constraint.trim()));
     if (isEmptyConstraintRegion) {
       plotlyRef.current?.purge(host);
+      fallbackPlotRef.current = null;
+      setThreeField(null);
       setSummary("添加条件后将在这里显示积分区域。");
       setError("");
       setState("empty");
       return;
     }
+
     setState("loading");
     setError("");
     plotlyRef.current?.purge(host);
+    fallbackPlotRef.current = null;
 
-    Promise.all([import("plotly.js-dist-min"), buildPlotSpec(spec)])
-      .then(async ([plotlyModule, plotSpec]) => {
-        if (cancelled) return;
-        const Plotly = plotlyModule.default ?? plotlyModule;
-        plotlyRef.current = Plotly;
+    buildPlotSpec(spec)
+      .then(async (plotSpec) => {
+        if (version !== renderVersionRef.current) return;
+        fallbackPlotRef.current = plotSpec;
         dimensionRef.current = plotSpec.dimension;
         setSummary(plotSpec.summary);
-        await Plotly.react(host, plotSpec.data as Data[], plotSpec.layout, plotSpec.config);
-        if (!cancelled) setState("ready");
+        if (plotSpec.threeField) {
+          setThreeField(plotSpec.threeField);
+          return;
+        }
+        setThreeField(null);
+        await renderWithPlotly(plotSpec, version);
       })
       .catch((reason: unknown) => {
-        if (cancelled) return;
+        if (version !== renderVersionRef.current) return;
         setError(reason instanceof Error ? reason.message : String(reason));
         setState("error");
       });
 
     return () => {
-      cancelled = true;
+      if (version === renderVersionRef.current) threeResetRef.current = null;
     };
-  }, [spec]);
+  }, [renderWithPlotly, spec]);
 
   useEffect(() => {
     const host = plotHostRef.current;
     if (!host) return;
     const observer = new ResizeObserver(() => {
       const Plotly = plotlyRef.current;
-      if (!Plotly || !host.isConnected || !host.classList.contains("js-plotly-plot")) return;
+      if (!Plotly || threeField || !host.isConnected || !host.classList.contains("js-plotly-plot")) return;
       try {
         void Promise.resolve(Plotly.Plots.resize(host)).catch(() => undefined);
       } catch {
@@ -70,7 +93,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     });
     observer.observe(host);
     return () => observer.disconnect();
-  }, []);
+  }, [threeField]);
 
   useEffect(
     () => () => {
@@ -79,7 +102,37 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     [],
   );
 
+  const handleThreeReady = useCallback(() => {
+    setState("ready");
+  }, []);
+
+  const handleThreeError = useCallback((threeError: Error) => {
+    const fallback = fallbackPlotRef.current;
+    const version = renderVersionRef.current;
+    setThreeField(null);
+    if (!fallback) {
+      setError(threeError.message);
+      setState("error");
+      return;
+    }
+    setSummary(`${fallback.summary}（当前浏览器使用兼容绘图模式）`);
+    void renderWithPlotly(fallback, version).catch((fallbackError: unknown) => {
+      if (version !== renderVersionRef.current) return;
+      const message = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      setError(`${threeError.message}；兼容绘图也失败：${message}`);
+      setState("error");
+    });
+  }, [renderWithPlotly]);
+
+  const registerThreeReset = useCallback((reset: (() => void) | null) => {
+    threeResetRef.current = reset;
+  }, []);
+
   const resetView = () => {
+    if (threeField && threeResetRef.current) {
+      threeResetRef.current();
+      return;
+    }
     const host = plotHostRef.current;
     const Plotly = plotlyRef.current;
     if (!host || !Plotly) return;
@@ -103,7 +156,19 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
         </button>
       </div>
       <div className="plot-stage" data-state={state}>
-        <div ref={plotHostRef} className="plot-host" aria-label={summary} />
+        <div
+          ref={plotHostRef}
+          className={`plot-host${threeField ? " is-three-hidden" : ""}`}
+          aria-label={threeField ? undefined : summary}
+        />
+        {threeField ? (
+          <ThreeIsosurfaceCanvas
+            field={threeField}
+            onReady={handleThreeReady}
+            onError={handleThreeError}
+            registerReset={registerThreeReset}
+          />
+        ) : null}
         {state === "empty" ? (
           <div className="plot-status">添加条件后，将在这里显示积分区域</div>
         ) : null}

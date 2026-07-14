@@ -60,6 +60,38 @@ describe("custom constraint regions", () => {
     expect(plot.data[0].surface).toEqual({ count: 1, fill: 1 });
     expect(plot.data[0].opacity).toBe(1);
     expect((plot.data[0].value as number[]).every(Number.isFinite)).toBe(true);
+    expect(plot.threeField?.resolution).toBe(48);
+    expect(plot.threeField?.values).toHaveLength(48 ** 3);
+    expect(plot.threeField?.values.some((value) => value < 0)).toBe(true);
+    expect(plot.threeField?.values.some((value) => value > 0)).toBe(true);
+  });
+
+  it("turns the sphere scalar field into a Three.js mesh with smooth normals", async () => {
+    const spec = getIntegralExample("triple");
+    if (spec.type !== "triple") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["x^2+y^2+z^2\\le 1"],
+      ranges: ["x", "y", "z"].map((variable) => ({ variable, lower: "-3", upper: "3" })),
+    };
+    const plot = await buildPlotSpec(spec);
+    const field = plot.threeField;
+    if (!field) throw new Error("missing Three.js scalar field");
+    const [{ MeshStandardMaterial }, { MarchingCubes }] = await Promise.all([
+      import("three"),
+      import("three/addons/objects/MarchingCubes.js"),
+    ]);
+    const material = new MeshStandardMaterial();
+    const mesh = new MarchingCubes(field.resolution, material, false, false, 120000);
+    mesh.isolation = field.isoLevel;
+    mesh.field.set(field.values);
+    mesh.update();
+    expect(mesh.geometry.drawRange.count).toBeGreaterThan(1000);
+    const normals = mesh.geometry.getAttribute("normal");
+    expect(normals.count).toBeGreaterThan(1000);
+    expect(Math.hypot(normals.getX(0), normals.getY(0), normals.getZ(0))).toBeGreaterThan(0);
+    mesh.geometry.dispose();
+    material.dispose();
   });
 
   it("renders a curve from two implicit equations", async () => {
@@ -90,6 +122,9 @@ describe("custom constraint regions", () => {
     expect(plot.data[0].surface).toEqual({ count: 1, fill: 1 });
     expect(plot.data[0].opacity).toBe(1);
     expect((plot.data[0].value as Array<number | null>).some((value) => value === null)).toBe(true);
+    expect(plot.threeField?.resolution).toBe(48);
+    expect(plot.threeField?.mask?.some(Boolean)).toBe(true);
+    expect(plot.threeField?.mask?.some((value) => !value)).toBe(true);
   });
 
   it("renders an explicitly solvable implicit surface as a smooth surface grid", async () => {

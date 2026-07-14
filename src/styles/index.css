@@ -850,6 +850,24 @@ math-field:focus-visible {
   height: 100%;
 }
 
+.plot-host.is-three-hidden {
+  visibility: hidden;
+}
+
+.three-region-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.three-region-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+
 .plot-status,
 .plot-error {
   position: absolute;

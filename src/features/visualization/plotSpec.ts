@@ -9,6 +9,21 @@ export interface IntegralPlotSpec {
   config: Partial<Config>;
   dimension: "2d" | "3d";
   summary: string;
+  threeField?: ThreeScalarField;
+}
+
+export interface ThreeScalarField {
+  resolution: number;
+  values: number[];
+  mask?: boolean[];
+  isoLevel: number;
+  ranges: [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange];
+}
+
+export interface ThreeScalarFieldRange {
+  variable: string;
+  lower: number;
+  upper: number;
 }
 
 type Evaluator = (scope?: Record<string, number>) => number;
@@ -202,9 +217,44 @@ async function constraintRegionPlot(
   }
 
   const [xRange, yRange, zRange] = ranges;
-  const xValues = linspace(xRange.lowerValue, xRange.upperValue, 32);
-  const yValues = linspace(yRange.lowerValue, yRange.upperValue, 32);
-  const zValues = linspace(zRange.lowerValue, zRange.upperValue, 32);
+  const coarseResolution = 19;
+  const coarseAxes = [xRange, yRange, zRange].map((range) =>
+    linspace(range.lowerValue, range.upperValue, coarseResolution),
+  ) as [number[], number[], number[]];
+  const minimumInside = [coarseResolution, coarseResolution, coarseResolution];
+  const maximumInside = [-1, -1, -1];
+  let coarseInsideCount = 0;
+  for (let zIndex = 0; zIndex < coarseResolution; zIndex += 1) {
+    for (let yIndex = 0; yIndex < coarseResolution; yIndex += 1) {
+      for (let xIndex = 0; xIndex < coarseResolution; xIndex += 1) {
+        const violation = violationAt({
+          [xRange.variable]: coarseAxes[0][xIndex],
+          [yRange.variable]: coarseAxes[1][yIndex],
+          [zRange.variable]: coarseAxes[2][zIndex],
+        });
+        if (violation > 0) continue;
+        coarseInsideCount += 1;
+        minimumInside[0] = Math.min(minimumInside[0], xIndex);
+        minimumInside[1] = Math.min(minimumInside[1], yIndex);
+        minimumInside[2] = Math.min(minimumInside[2], zIndex);
+        maximumInside[0] = Math.max(maximumInside[0], xIndex);
+        maximumInside[1] = Math.max(maximumInside[1], yIndex);
+        maximumInside[2] = Math.max(maximumInside[2], zIndex);
+      }
+    }
+  }
+
+  const renderRanges = [xRange, yRange, zRange].map((range, axis) => {
+    if (coarseInsideCount === 0) return { lower: range.lowerValue, upper: range.upperValue };
+    const lowerIndex = Math.max(0, minimumInside[axis] - 1);
+    const upperIndex = Math.min(coarseResolution - 1, maximumInside[axis] + 1);
+    return { lower: coarseAxes[axis][lowerIndex], upper: coarseAxes[axis][upperIndex] };
+  }) as [{ lower: number; upper: number }, { lower: number; upper: number }, { lower: number; upper: number }];
+
+  const resolution = 48;
+  const xValues = linspace(renderRanges[0].lower, renderRanges[0].upper, resolution);
+  const yValues = linspace(renderRanges[1].lower, renderRanges[1].upper, resolution);
+  const zValues = linspace(renderRanges[2].lower, renderRanges[2].upper, resolution);
   const x: number[] = [];
   const y: number[] = [];
   const z: number[] = [];
@@ -262,6 +312,16 @@ async function constraintRegionPlot(
     config: commonConfig,
     dimension: "3d",
     summary: `显示满足 ${region.constraints.join("，")} 的三维积分区域，可拖动旋转。`,
+    threeField: {
+      resolution,
+      values: value,
+      isoLevel: 0,
+      ranges: [
+        { variable: xRange.variable, lower: renderRanges[0].lower, upper: renderRanges[0].upper },
+        { variable: yRange.variable, lower: renderRanges[1].lower, upper: renderRanges[1].upper },
+        { variable: zRange.variable, lower: renderRanges[2].lower, upper: renderRanges[2].upper },
+      ],
+    },
   };
 }
 
@@ -401,7 +461,7 @@ async function implicitRegionPlot(
       }
     }
 
-    const count = 43;
+    const count = 48;
     const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
     const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
     const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
@@ -409,14 +469,19 @@ async function implicitRegionPlot(
     const y: number[] = [];
     const z: number[] = [];
     const value: Array<number | null> = [];
+    const threeValues: number[] = [];
+    const mask: boolean[] = [];
     let visibleSamples = 0;
     for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
       const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
       const primary = values.find(({ constraint }) => constraint.operator === "=")!;
       const allowed = satisfiesInequalities(values);
+      const surfaceValue = primary.left - primary.right;
       x.push(xValue); y.push(yValue); z.push(zValue);
-      value.push(allowed ? primary.left - primary.right : null);
-      if (allowed && Math.abs(primary.left - primary.right) <= equalityTolerance * 2) visibleSamples += 1;
+      value.push(allowed ? surfaceValue : null);
+      threeValues.push(surfaceValue);
+      mask.push(allowed);
+      if (allowed && Math.abs(surfaceValue) <= equalityTolerance * 2) visibleSamples += 1;
     }
     if (visibleSamples === 0) throw new Error("当前扫描范围内没有找到满足条件的曲面");
     return {
@@ -441,6 +506,17 @@ async function implicitRegionPlot(
       },
       config: commonConfig, dimension: "3d",
       summary: `显示满足 ${region.constraints.join("，")} 的隐式曲面，可拖动旋转。`,
+      threeField: {
+        resolution: count,
+        values: threeValues,
+        mask,
+        isoLevel: 0,
+        ranges: [
+          { variable: xRange.variable, lower: xRange.lowerValue, upper: xRange.upperValue },
+          { variable: yRange.variable, lower: yRange.lowerValue, upper: yRange.upperValue },
+          { variable: zRange.variable, lower: zRange.lowerValue, upper: zRange.upperValue },
+        ],
+      },
     };
   }
 
