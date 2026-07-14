@@ -10,14 +10,15 @@
     "generate:computer-exams": "node scripts/generate_computer_exams.mjs ../1766137194_第八章/可视化积分区域题目汇总.md",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "katex": "^0.17.0",
     "lucide-react": "^1.23.0",
     "mathjs": "^15.2.0",
     "mathlive": "^0.110.0",
-    "plotly.js-dist-min": "^3.7.0",
+    "plotly.js": "3.7.0",
     "pyodide": "^314.0.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -25,6 +26,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/katex": "^0.16.8",

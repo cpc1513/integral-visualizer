@@ -7,14 +7,20 @@ import type { ComputeResult, ComputeStatus } from "./types";
 declare const self: DedicatedWorkerGlobalScope;
 
 const PYODIDE_VERSION = "314.0.2";
-const PYODIDE_INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+const PYODIDE_INDEX_URLS = [
+  `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`,
+  `https://unpkg.com/pyodide@${PYODIDE_VERSION}/`,
+] as const;
 
 const PYTHON_SETUP = String.raw`
 import json
+import math
+import re
 import time
 from sympy import (
-    Abs, E, Integral, Matrix, Symbol, acos, asin, atan, cos, cosh, cot, exp,
-    latex, log, nan, oo, pi, sin, sinh, sqrt, tan, zoo, integrate, lambdify, N
+    Abs, Add, E, Float, I, Integer, Integral, Matrix, Mul, Pow, Rational, Symbol,
+    acos, asin, atan, cos, cosh, cot, exp, latex, log, nan, oo, pi, sin, sinh,
+    sqrt, tan, zoo, integrate, lambdify, N
 )
 from sympy.parsing.sympy_parser import (
     convert_xor, implicit_multiplication_application, parse_expr,
@@ -30,11 +36,52 @@ LOCALS = {
     "tan": tan, "cot": cot, "asin": asin, "acos": acos, "atan": atan,
     "sinh": sinh, "cosh": cosh, "exp": exp, "log": log, "Abs": Abs, "abs": Abs,
 }
+SAFE_GLOBALS = {
+    "__builtins__": {},
+    "Integer": Integer,
+    "Float": Float,
+    "Rational": Rational,
+    "Add": Add,
+    "Mul": Mul,
+    "Pow": Pow,
+}
+KNOWN_IDENTIFIERS = frozenset(LOCALS)
+IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+NUMBER_PATTERN = re.compile(r"(?<![A-Za-z_])(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+ALLOWED_EXPRESSION_PATTERN = re.compile(r"[A-Za-z0-9_+\-*/^(),.\s]+")
+
+def normalize_safe_expression(value):
+    text = str(value).strip()
+    if not text:
+        return "0"
+    if not ALLOWED_EXPRESSION_PATTERN.fullmatch(text):
+        raise ValueError("表达式包含不受支持的字符")
+    # Decimal points are allowed only inside numeric literals; this blocks
+    # attribute access while retaining inputs such as 1.25 and 2e-3.
+    if "." in NUMBER_PATTERN.sub("0", text):
+        raise ValueError("表达式不允许属性访问")
+
+    def expand_identifier(match):
+        name = match.group(0)
+        if name in KNOWN_IDENTIFIERS:
+            return name
+        # Preserve the calculator's existing implicit multiplication syntax:
+        # xy and abc mean x*y and a*b*c, not new Python names.
+        if name.islower() and all(character in SYMBOLS for character in name):
+            return "*".join(name)
+        raise ValueError(f"不支持的符号或函数：{name}")
+
+    return IDENTIFIER_PATTERN.sub(expand_identifier, text)
 
 def parse_math(value):
-    if value is None or str(value).strip() == "":
-        return 0
-    return parse_expr(str(value), local_dict=LOCALS, transformations=TRANSFORMS, evaluate=False)
+    normalized = normalize_safe_expression(value)
+    return parse_expr(
+        normalized,
+        local_dict=LOCALS,
+        global_dict=SAFE_GLOBALS,
+        transformations=TRANSFORMS,
+        evaluate=False,
+    )
 
 def prepare_problem(payload):
     kind = payload["type"]
@@ -103,16 +150,31 @@ def compute_integral(payload_json):
     payload = json.loads(payload_json)
     expr, bounds, immediate_result, step_label = prepare_problem(payload)
     result = immediate_result if immediate_result is not None else integrate_prepared(expr, bounds)
-    unresolved = bool(result.atoms(Integral)) or result.has(nan, zoo, oo, -oo)
+    if result.has(nan, zoo, oo, -oo):
+        return json.dumps({
+            "outcome": "invalid",
+            "error": "积分发散或未定义，不能转为数值积分。",
+        }, ensure_ascii=False)
+    if result.has(I) or result.is_real is False:
+        return json.dumps({
+            "outcome": "invalid",
+            "error": "积分结果不是有限实数，不能转为数值积分。",
+        }, ensure_ascii=False)
+    unresolved = bool(result.atoms(Integral))
     if bounds and result.free_symbols:
         unresolved = True
+    if unresolved and not bounds:
+        return json.dumps({
+            "outcome": "invalid",
+            "error": "未找到闭式原函数；不定积分不能用定区间数值积分替代。",
+        }, ensure_ascii=False)
     steps = [
         {"label": step_label, "latex": latex(expr)},
         {"label": "依次代入积分限", "latex": latex(result)},
     ]
     numeric_value = "—" if not bounds else str(N(result, 12))
     return json.dumps({
-        "needsNumeric": unresolved,
+        "outcome": "numeric" if unresolved else "exact",
         "result": {
             "status": "exact",
             "exactLatex": latex(result),
@@ -123,7 +185,8 @@ def compute_integral(payload_json):
     }, ensure_ascii=False)
 
 def compute_numeric_integral(payload_json):
-    from scipy.integrate import nquad
+    import warnings
+    from scipy.integrate import IntegrationWarning, nquad
 
     started = time.perf_counter()
     payload = json.loads(payload_json)
@@ -144,7 +207,14 @@ def compute_numeric_integral(payload_json):
         else:
             ranges.append([float(lower_fn()), float(upper_fn())])
 
-    value, error = nquad(function, ranges, opts={"epsabs": 1e-8, "epsrel": 1e-8, "limit": 80})
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", IntegrationWarning)
+            value, error = nquad(function, ranges, opts={"epsabs": 1e-8, "epsrel": 1e-8, "limit": 80})
+    except IntegrationWarning as warning:
+        raise ValueError("数值积分未收敛，请检查积分是否发散或在奇点处分段") from warning
+    if not math.isfinite(value) or not math.isfinite(error):
+        raise ValueError("数值积分未得到有限实数，请检查定义域、奇点或积分是否收敛")
     return json.dumps({
         "status": "numeric",
         "exactLatex": None,
@@ -171,34 +241,48 @@ def compute_constraint_integral(payload_json):
     if np.any(lower >= upper):
         raise ValueError("扫描范围下限必须小于上限")
 
-    samples = qmc.Sobol(d=len(variables), scramble=True, seed=20260710).random_base2(m=16)
-    points = qmc.scale(samples, lower, upper)
-    arguments = tuple(points[:, index] for index in range(len(variables)))
-    mask = np.ones(points.shape[0], dtype=bool)
-    for item in region["constraints"]:
-        left = np.asarray(lambdify(tuple(variables), parse_math(item["left"]), modules=["numpy"])(*arguments))
-        right = np.asarray(lambdify(tuple(variables), parse_math(item["right"]), modules=["numpy"])(*arguments))
-        left = np.broadcast_to(left, mask.shape)
-        right = np.broadcast_to(right, mask.shape)
-        operator = item["operator"]
-        if operator in ("<=", "<"):
-            mask &= left <= right
-        elif operator in (">=", ">"):
-            mask &= left >= right
-        else:
-            tolerance = max(upper - lower) * 0.006
-            mask &= np.abs(left - right) <= tolerance
-
-    if not np.any(mask):
-        raise ValueError("当前扫描范围内没有满足全部约束的采样点")
+    constraint_functions = [(
+        lambdify(tuple(variables), parse_math(item["left"]), modules=["numpy"]),
+        lambdify(tuple(variables), parse_math(item["right"]), modules=["numpy"]),
+        item["operator"],
+    ) for item in region["constraints"]]
     expr = parse_math(payload.get("integrand", "1"))
     function = lambdify(tuple(variables), expr, modules=["numpy"])
-    values = np.asarray(function(*arguments), dtype=float)
-    values = np.broadcast_to(values, mask.shape)
-    weighted = np.where(mask & np.isfinite(values), values, 0.0)
     volume = float(np.prod(upper - lower))
-    estimate = volume * float(np.mean(weighted))
-    error = volume * float(np.std(weighted, ddof=1)) / np.sqrt(weighted.size)
+    estimates = []
+    region_sample_count = 0
+    for replicate in range(8):
+        samples = qmc.Sobol(d=len(variables), scramble=True, seed=20260710 + replicate).random_base2(m=13)
+        points = qmc.scale(samples, lower, upper)
+        arguments = tuple(points[:, index] for index in range(len(variables)))
+        mask = np.ones(points.shape[0], dtype=bool)
+        for left_fn, right_fn, operator in constraint_functions:
+            left = np.broadcast_to(np.asarray(left_fn(*arguments)), mask.shape)
+            right = np.broadcast_to(np.asarray(right_fn(*arguments)), mask.shape)
+            finite = np.isfinite(left) & np.isfinite(right)
+            if operator in ("<=", "<"):
+                mask &= finite & (left <= right)
+            elif operator in (">=", ">"):
+                mask &= finite & (left >= right)
+            else:
+                tolerance = max(upper - lower) * 0.006
+                mask &= finite & (np.abs(left - right) <= tolerance)
+
+        region_sample_count += int(np.count_nonzero(mask))
+        values = np.broadcast_to(np.asarray(function(*arguments)), mask.shape)
+        if np.iscomplexobj(values):
+            if np.any(mask & (np.abs(np.imag(values)) > 1e-12)):
+                raise ValueError("被积函数在积分区域内出现非实数值，请检查定义域")
+            values = np.real(values)
+        values = np.asarray(values, dtype=float)
+        if np.any(mask & ~np.isfinite(values)):
+            raise ValueError("被积函数在积分区域内出现 NaN 或无穷值，请检查定义域或奇点")
+        estimates.append(volume * float(np.mean(np.where(mask, values, 0.0))))
+
+    if region_sample_count == 0:
+        raise ValueError("当前扫描范围内没有满足全部约束的采样点")
+    estimate = float(np.mean(estimates))
+    error = float(np.std(estimates, ddof=1) / np.sqrt(len(estimates)))
     return json.dumps({
         "status": "numeric",
         "exactLatex": None,
@@ -206,7 +290,7 @@ def compute_constraint_integral(payload_json):
         "errorEstimate": f"{error:.3g}",
         "steps": [
             {"label": "条件区域被积函数", "latex": latex(expr)},
-            {"label": "Sobol 数值积分", "latex": f"{estimate:.12g}"},
+            {"label": "8 组随机化 Sobol 数值积分", "latex": f"{estimate:.12g}"},
         ],
         "elapsedMs": round((time.perf_counter() - started) * 1000),
     }, ensure_ascii=False)
@@ -221,7 +305,7 @@ type WorkerRequest = {
 type WorkerResponse =
   | { type: "status"; id: number; status: ComputeStatus }
   | { type: "result"; id: number; result: ComputeResult }
-  | { type: "error"; id: number; error: string };
+  | { type: "error"; id: number; error: string; fatal?: boolean };
 
 let pyodidePromise: Promise<PyodideAPI> | null = null;
 let scipyLoaded = false;
@@ -233,11 +317,26 @@ function post(message: WorkerResponse) {
 async function ensurePyodide(id: number) {
   if (!pyodidePromise) {
     post({ type: "status", id, status: "loading-python" });
-    pyodidePromise = loadPyodide({ indexURL: PYODIDE_INDEX_URL }).then(async (pyodide) => {
+    const loadingPromise = (async () => {
+      let lastError: unknown;
+      for (const indexURL of PYODIDE_INDEX_URLS) {
+        try {
+          return await loadPyodide({ indexURL });
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("Python 运行时下载失败");
+    })().then(async (pyodide) => {
       post({ type: "status", id, status: "loading-symbolics" });
       await pyodide.loadPackage("sympy");
       await pyodide.runPythonAsync(PYTHON_SETUP);
       return pyodide;
+    });
+    pyodidePromise = loadingPromise;
+    void loadingPromise.catch(() => {
+      if (pyodidePromise === loadingPromise) pyodidePromise = null;
+      scipyLoaded = false;
     });
   }
   return pyodidePromise;
@@ -246,8 +345,15 @@ async function ensurePyodide(id: number) {
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   if (event.data.type !== "compute") return;
   const { id, payload, method } = event.data;
+  let pyodide: PyodideAPI;
   try {
-    const pyodide = await ensurePyodide(id);
+    pyodide = await ensurePyodide(id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    post({ type: "error", id, error: message.slice(0, 500), fatal: true });
+    return;
+  }
+  try {
     const payloadJson = JSON.stringify(payload);
     pyodide.globals.set("payload_json", payloadJson);
     if (method === "numeric" || payload.constraintRegion) {
@@ -267,8 +373,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     post({ type: "status", id, status: "computing" });
     const raw = await pyodide.runPythonAsync("compute_integral(payload_json)");
-    const response = JSON.parse(String(raw)) as { needsNumeric: boolean; result: ComputeResult };
-    if (!response.needsNumeric) {
+    const response = JSON.parse(String(raw)) as
+      | { outcome: "exact" | "numeric"; result: ComputeResult }
+      | { outcome: "invalid"; error: string };
+    if (response.outcome === "invalid") throw new Error(response.error);
+    if (response.outcome === "exact") {
       post({ type: "result", id, result: response.result });
       return;
     }

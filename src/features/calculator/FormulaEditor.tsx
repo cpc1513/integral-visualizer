@@ -1,5 +1,5 @@
 import { MathfieldElement } from "mathlive";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useMathfieldFocus } from "./MathfieldFocusContext";
 
 MathfieldElement.soundsDirectory = null;
@@ -7,9 +7,11 @@ MathfieldElement.soundsDirectory = null;
 interface FormulaEditorProps {
   value: string;
   onChange: (value: string) => void;
+  error?: string;
 }
 
-export function FormulaEditor({ value, onChange }: FormulaEditorProps) {
+export function FormulaEditor({ value, onChange, error = "" }: FormulaEditorProps) {
+    const errorId = useId();
     const hostRef = useRef<HTMLDivElement>(null);
     const mathfieldRef = useRef<MathfieldElement | null>(null);
     const changeHandlerRef = useRef(onChange);
@@ -41,7 +43,7 @@ export function FormulaEditor({ value, onChange }: FormulaEditorProps) {
         mathfield.remove();
         mathfieldRef.current = null;
       };
-    }, [activate, release, setDefault]);
+    }, [activate, errorId, release, setDefault]);
 
     useEffect(() => {
       const mathfield = mathfieldRef.current;
@@ -50,5 +52,22 @@ export function FormulaEditor({ value, onChange }: FormulaEditorProps) {
       }
     }, [value]);
 
-    return <div className="formula-editor-host" ref={hostRef} />;
+    useEffect(() => {
+      const mathfield = mathfieldRef.current;
+      if (!mathfield) return;
+      if (error) {
+        mathfield.setAttribute("aria-invalid", "true");
+        mathfield.setAttribute("aria-describedby", errorId);
+      } else {
+        mathfield.removeAttribute("aria-invalid");
+        mathfield.removeAttribute("aria-describedby");
+      }
+    }, [error, errorId]);
+
+    return (
+      <div className="formula-editor">
+        <div className="formula-editor-host" ref={hostRef} />
+        {error ? <p className="formula-editor-error" id={errorId} role="alert">{error}</p> : null}
+      </div>
+    );
 }

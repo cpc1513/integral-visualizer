@@ -293,6 +293,18 @@ math-field:focus-visible {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.formula-mathfield[aria-invalid="true"] {
+  border-color: #dc4c4c;
+  box-shadow: 0 0 0 3px rgba(220, 76, 76, 0.1);
+}
+
+.formula-editor-error {
+  margin: 5px 2px 0;
+  color: #b42318;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .formula-mathfield::part(menu-toggle),
 .formula-mathfield::part(virtual-keyboard-toggle) {
   display: none;
@@ -634,7 +646,7 @@ math-field:focus-visible {
 }
 
 .compute-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.78;
 }
 
@@ -1350,4 +1362,49 @@ math-field:focus-visible {
   .topic-sidebar { display: none; }
   .computer-mobile-filters .select-field { display: flex; }
   .past-exam-filters .year-mobile-filter { display: flex; }
+}
+
+.fatal-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f5f8fc;
+  color: #102a4c;
+}
+
+.fatal-error-card {
+  width: min(520px, 100%);
+  padding: 32px;
+  border: 1px solid #dce4ef;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgb(16 42 76 / 10%);
+}
+
+.fatal-error-card > span {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.fatal-error-card h1 {
+  margin: 10px 0 8px;
+  font-size: 24px;
+}
+
+.fatal-error-card p {
+  margin: 0 0 22px;
+  color: #52657d;
+  line-height: 1.7;
+}
+
+.fatal-error-card > div {
+  display: flex;
+  gap: 10px;
+}
+
+.fatal-error-card .compute-button {
+  width: auto;
+  min-height: 40px;
+  padding-inline: 18px;
 }

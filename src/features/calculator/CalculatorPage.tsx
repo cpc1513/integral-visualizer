@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { BoundsEditor } from "./BoundsEditor";
+import {
+  loadCalculatorState,
+  saveCalculatorState,
+  specFingerprint,
+  type CalculatorSpecs,
+} from "./calculatorState";
 import { ComputePanel } from "./ComputePanel";
-import { integralExamples, DEFAULT_INTEGRAL_TYPE } from "./examples";
+import { integralExamples } from "./examples";
 import { FormulaEditor } from "./FormulaEditor";
 import { regenerateFormula, synchronizeFormula } from "./formula";
 import { IntegralTypeSelector } from "./IntegralTypeSelector";
@@ -10,8 +16,6 @@ import { SymbolKeyboard } from "./SymbolKeyboard";
 import { MathfieldFocusProvider } from "./MathfieldFocusContext";
 import type { ComputeMethod, ComputeResult, ComputeStatus, IntegralSpec, IntegralType } from "./types";
 import { VisualizationCanvas } from "../visualization/VisualizationCanvas";
-
-const STORAGE_KEY = "integral-visualizer:calculator:v2";
 
 const seededResults: Record<IntegralType, ComputeResult> = {
   ordinary: {
@@ -56,35 +60,17 @@ const seededResults: Record<IntegralType, ComputeResult> = {
   },
 };
 
-interface StoredCalculatorState {
-  activeType: IntegralType;
-  specs: Record<IntegralType, IntegralSpec>;
-}
-
-function loadCalculatorState(): StoredCalculatorState {
-  const fallback = {
-    activeType: DEFAULT_INTEGRAL_TYPE,
-    specs: structuredClone(integralExamples),
-  };
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return fallback;
-    const parsed = JSON.parse(stored) as StoredCalculatorState;
-    if (!parsed.specs || !parsed.activeType) return fallback;
-    return parsed;
-  } catch {
-    return fallback;
-  }
-}
-
 export function CalculatorPage() {
   const location = useLocation();
   const [calculator, setCalculator] = useState(loadCalculatorState);
+  const activeSpec = calculator.specs[calculator.activeType];
   const [results, setResults] = useState<Record<IntegralType, ComputeResult | null>>(() =>
     Object.fromEntries(
       (Object.keys(integralExamples) as IntegralType[]).map((type) => [
         type,
-        calculator.specs[type].latex === integralExamples[type].latex ? seededResults[type] : null,
+        specFingerprint(calculator.specs[type]) === specFingerprint(integralExamples[type])
+          ? seededResults[type]
+          : null,
       ]),
     ) as Record<IntegralType, ComputeResult | null>,
   );
@@ -93,9 +79,29 @@ export function CalculatorPage() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [activeMethod, setActiveMethod] = useState<ComputeMethod>("auto");
+  const [formulaDraft, setFormulaDraft] = useState(activeSpec.latex);
+  const [formulaError, setFormulaError] = useState("");
   const requestVersionRef = useRef(0);
-  const activeSpec = calculator.specs[calculator.activeType];
+  const computationActiveRef = useRef(false);
+  const calculatorRef = useRef(calculator);
+  calculatorRef.current = calculator;
   const busy = ["loading-python", "loading-symbolics", "computing", "loading-numerics"].includes(status);
+
+  const invalidateComputation = useCallback(async () => {
+    requestVersionRef.current += 1;
+    const shouldCancel = computationActiveRef.current;
+    computationActiveRef.current = false;
+    setStartedAt(null);
+    setStatus("idle");
+    setError("");
+    if (!shouldCancel) return;
+    try {
+      const { cancelActiveComputation } = await import("./computeClient");
+      cancelActiveComputation();
+    } catch {
+      // A failed lazy import will be surfaced if the user starts another computation.
+    }
+  }, []);
 
   useEffect(() => {
     if (!busy || startedAt === null) return;
@@ -106,43 +112,80 @@ export function CalculatorPage() {
   }, [busy, startedAt]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(calculator));
+    const timer = window.setTimeout(() => saveCalculatorState(calculator), 300);
+    return () => window.clearTimeout(timer);
   }, [calculator]);
+
+  useEffect(() => {
+    setFormulaDraft(activeSpec.latex);
+    setFormulaError("");
+  }, [activeSpec.latex, calculator.activeType]);
 
   useEffect(() => {
     const incoming = location.state as { visualizationSpec?: IntegralSpec } | null;
     const spec = incoming?.visualizationSpec;
     if (!spec || !["ordinary", "double", "triple", "line", "surface"].includes(spec.type)) return;
+    void invalidateComputation();
     const nextSpec = structuredClone(spec);
     setCalculator((current) => ({
       activeType: nextSpec.type,
-      specs: { ...current.specs, [nextSpec.type]: nextSpec },
+      specs: { ...current.specs, [nextSpec.type]: nextSpec } as CalculatorSpecs,
     }));
     setResults((current) => ({ ...current, [nextSpec.type]: null }));
-    setStatus("idle");
-    setError("");
-  }, [location.state]);
+  }, [invalidateComputation, location.state]);
+
+  useEffect(
+    () => () => {
+      saveCalculatorState(calculatorRef.current);
+      requestVersionRef.current += 1;
+      if (!computationActiveRef.current) return;
+      computationActiveRef.current = false;
+      void import("./computeClient")
+        .then(({ cancelActiveComputation }) => cancelActiveComputation())
+        .catch(() => undefined);
+    },
+    [],
+  );
 
   const setActiveType = (activeType: IntegralType) => {
+    void invalidateComputation();
     setCalculator((current) => ({ ...current, activeType }));
-    setStatus("idle");
-    setError("");
   };
 
   const updateActiveSpec = useCallback((nextSpec: IntegralSpec, preserveLatex = false) => {
+    void invalidateComputation();
     setCalculator((current) => ({
       ...current,
       specs: {
         ...current.specs,
         [nextSpec.type]: preserveLatex ? nextSpec : regenerateFormula(nextSpec),
-      },
+      } as CalculatorSpecs,
     }));
     setResults((current) => ({ ...current, [nextSpec.type]: null }));
-    setStatus("idle");
-    setError("");
-  }, []);
+  }, [invalidateComputation]);
+
+  const updateFormula = (latex: string) => {
+    setFormulaDraft(latex);
+    void invalidateComputation();
+    setResults((current) => ({ ...current, [activeSpec.type]: null }));
+    const result = synchronizeFormula(activeSpec, latex);
+    if (!result.ok) {
+      setFormulaError(`${result.error} 当前草稿不会用于计算或可视化。`);
+      return;
+    }
+    setFormulaError("");
+    setCalculator((current) => ({
+      ...current,
+      specs: { ...current.specs, [result.spec.type]: result.spec } as CalculatorSpecs,
+    }));
+  };
 
   const compute = async (method: ComputeMethod = "auto") => {
+    if (formulaError) {
+      setStatus("error");
+      setError(formulaError);
+      return;
+    }
     if ((activeSpec.type === "line" || activeSpec.type === "surface") && activeSpec.regionMode === "constraints") {
       setStatus("error");
       setError("区域已可视化；当前隐式条件需要参数方程后才能计算。切换回参数形式即可继续求值。");
@@ -160,24 +203,30 @@ export function CalculatorPage() {
     setElapsedMs(0);
     setStartedAt(Date.now());
     setActiveMethod(resolvedMethod);
-    const requestedType = activeSpec.type;
+    computationActiveRef.current = true;
+    const requestedSpec = structuredClone(activeSpec);
+    const requestedType = requestedSpec.type;
+    const requestedFingerprint = specFingerprint(requestedSpec);
+    const requestIsCurrent = () =>
+      requestVersion === requestVersionRef.current
+      && specFingerprint(calculatorRef.current.specs[requestedType]) === requestedFingerprint;
     try {
       const { cancelActiveComputation, computeIntegral } = await import("./computeClient");
+      if (!requestIsCurrent()) return;
       cancelActiveComputation();
       const result = await computeIntegral(
-        activeSpec,
+        requestedSpec,
         (nextStatus) => {
-          if (requestVersion === requestVersionRef.current) setStatus(nextStatus);
+          if (requestIsCurrent()) setStatus(nextStatus);
         },
         resolvedMethod,
       );
-      if (requestVersion !== requestVersionRef.current) return;
+      if (!requestIsCurrent()) return;
       setResults((current) => ({ ...current, [requestedType]: result }));
       setStatus("complete");
     } catch (reason) {
-      if (requestVersion !== requestVersionRef.current) return;
-      const { ComputationCancelledError } = await import("./computeClient");
-      if (reason instanceof ComputationCancelledError) {
+      if (!requestIsCurrent()) return;
+      if (reason instanceof Error && reason.name === "ComputationCancelledError") {
         setStatus("stopped");
         setError("");
         return;
@@ -185,7 +234,10 @@ export function CalculatorPage() {
       setError(reason instanceof Error ? reason.message : String(reason));
       setStatus("error");
     } finally {
-      if (requestVersion === requestVersionRef.current) setStartedAt(null);
+      if (requestIsCurrent()) {
+        computationActiveRef.current = false;
+        setStartedAt(null);
+      }
     }
   };
 
@@ -195,13 +247,9 @@ export function CalculatorPage() {
   };
 
   const useNumericCompute = async () => {
-    requestVersionRef.current += 1;
-    const { cancelActiveComputation } = await import("./computeClient");
-    cancelActiveComputation();
+    await invalidateComputation();
     void compute("numeric");
   };
-
-  const formulaValue = useMemo(() => activeSpec.latex, [activeSpec.latex]);
 
   return (
     <MathfieldFocusProvider>
@@ -216,8 +264,9 @@ export function CalculatorPage() {
           <section className="control-section">
             <h2>输入完整公式</h2>
             <FormulaEditor
-              value={formulaValue}
-              onChange={(latex) => updateActiveSpec(synchronizeFormula(activeSpec, latex), true)}
+              value={formulaDraft}
+              error={formulaError}
+              onChange={updateFormula}
             />
             <SymbolKeyboard />
           </section>
@@ -235,6 +284,7 @@ export function CalculatorPage() {
             onUseNumeric={() => void useNumericCompute()}
             elapsedMs={elapsedMs}
             showNumericSwitch={status === "computing" && elapsedMs >= 12_000 && activeMethod !== "numeric"}
+            computeBlocked={Boolean(formulaError)}
           />
         </div>
       </section>

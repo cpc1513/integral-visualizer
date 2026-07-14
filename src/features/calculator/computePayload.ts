@@ -35,13 +35,14 @@ export function createComputePayload(spec: IntegralSpec): ComputePayload {
   }
   if (spec.type === "double" || spec.type === "triple") {
     if (spec.regionMode === "constraints" && spec.constraintRegion) {
+      const constraints = spec.constraintRegion.constraints.map(parseConstraint);
+      if (constraints.some((constraint) => constraint.operator === "=")) {
+        throw new Error("二重、三重积分区域必须由不等式围成；单独等式是零测集，不能表示面积或体积");
+      }
       return {
         ...base,
         constraintRegion: {
-          constraints: spec.constraintRegion.constraints.map((source) => {
-            const constraint = parseConstraint(source);
-            return { left: constraint.left, right: constraint.right, operator: constraint.operator };
-          }),
+          constraints: constraints.map(({ left, right, operator }) => ({ left, right, operator })),
           ranges: spec.constraintRegion.ranges.map((range) => ({
             variable: range.variable,
             lower: latexToExpression(range.lower),

@@ -1,5 +1,5 @@
 import { MousePointer2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { Data } from "plotly.js";
 import type { IntegralSpec } from "../calculator/types";
 import { buildPlotSpec, type IntegralPlotSpec, type ThreeCurveSpec, type ThreeScalarField } from "./plotSpec";
@@ -11,8 +11,9 @@ interface VisualizationCanvasProps {
 }
 
 export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
+  const deferredSpec = useDeferredValue(spec);
   const plotHostRef = useRef<HTMLDivElement>(null);
-  const plotlyRef = useRef<typeof import("plotly.js-dist-min") | null>(null);
+  const plotlyRef = useRef<typeof import("plotly.js") | null>(null);
   const dimensionRef = useRef<"2d" | "3d">("3d");
   const renderVersionRef = useRef(0);
   const fallbackPlotRef = useRef<IntegralPlotSpec | null>(null);
@@ -26,7 +27,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
   const renderWithPlotly = useCallback(async (plotSpec: IntegralPlotSpec, version: number) => {
     const host = plotHostRef.current;
     if (!host) throw new Error("绘图容器尚未准备好");
-    const plotlyModule = await import("plotly.js-dist-min");
+    const plotlyModule = await import("./plotlyBundle");
     if (version !== renderVersionRef.current) return;
     const Plotly = plotlyModule.default ?? plotlyModule;
     plotlyRef.current = Plotly;
@@ -39,9 +40,9 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     const host = plotHostRef.current;
     if (!host) return;
     const isEmptyConstraintRegion =
-      "regionMode" in spec
-      && spec.regionMode === "constraints"
-      && (!spec.constraintRegion || spec.constraintRegion.constraints.every((constraint) => !constraint.trim()));
+      "regionMode" in deferredSpec
+      && deferredSpec.regionMode === "constraints"
+      && (!deferredSpec.constraintRegion || deferredSpec.constraintRegion.constraints.every((constraint) => !constraint.trim()));
     if (isEmptyConstraintRegion) {
       plotlyRef.current?.purge(host);
       fallbackPlotRef.current = null;
@@ -60,7 +61,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     setThreeField(null);
     setThreeCurve(null);
 
-    buildPlotSpec(spec)
+    buildPlotSpec(deferredSpec)
       .then(async (plotSpec) => {
         if (version !== renderVersionRef.current) return;
         fallbackPlotRef.current = plotSpec;
@@ -89,7 +90,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     return () => {
       if (version === renderVersionRef.current) threeResetRef.current = null;
     };
-  }, [renderWithPlotly, spec]);
+  }, [deferredSpec, renderWithPlotly]);
 
   useEffect(() => {
     const host = plotHostRef.current;

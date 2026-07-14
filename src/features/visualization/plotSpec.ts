@@ -52,9 +52,12 @@ async function createEvaluator(expression: string): Promise<Evaluator> {
   const { compile } = await import("mathjs");
   const compiled = compile(latexToExpression(expression));
   return (scope = {}) => {
-    const value = Number(compiled.evaluate(scope));
-    if (!Number.isFinite(value)) throw new Error(`表达式在当前区域没有有限实值：${expression}`);
-    return value;
+    try {
+      const value = Number(compiled.evaluate(scope));
+      return Number.isFinite(value) ? value : Number.NaN;
+    } catch {
+      return Number.NaN;
+    }
   };
 }
 
@@ -63,8 +66,13 @@ async function evaluateBound(bound: Pick<VariableBound, "lower" | "upper">, scop
     createEvaluator(bound.lower),
     createEvaluator(bound.upper),
   ]);
-  return [lower(scope), upper(scope)] as const;
+  const values = [lower(scope), upper(scope)] as const;
+  if (!values.every(Number.isFinite)) throw new Error("积分上下限必须是有限实数");
+  return values;
 }
+
+const finiteOrNull = (value: number) => Number.isFinite(value) ? value : null;
+const isFinitePoint = (point: Point3) => point.every(Number.isFinite);
 
 const commonLayout: Partial<Layout> = {
   autosize: true,
@@ -88,7 +96,8 @@ async function ordinaryPlot(spec: Extract<IntegralSpec, { type: "ordinary" }>) {
   const evaluate = await createEvaluator(spec.integrand);
   const [lower, upper] = await evaluateBound(spec.bound);
   const x = linspace(lower, upper, 180);
-  const y = x.map((value) => evaluate({ [spec.bound.variable]: value }));
+  const y = x.map((value) => finiteOrNull(evaluate({ [spec.bound.variable]: value })));
+  if (!y.some((value) => value !== null)) throw new Error(`表达式在当前区间没有有限实值：${spec.integrand}`);
   return {
     data: [
       {
@@ -121,8 +130,11 @@ async function doublePlot(spec: Extract<IntegralSpec, { type: "double" }>) {
     createEvaluator(inner.upper),
   ]);
   const x = linspace(outerLower, outerUpper, 120);
-  const lower = x.map((value) => lowerEvaluator({ [outer.variable]: value }));
-  const upper = x.map((value) => upperEvaluator({ [outer.variable]: value }));
+  const lower = x.map((value) => finiteOrNull(lowerEvaluator({ [outer.variable]: value })));
+  const upper = x.map((value) => finiteOrNull(upperEvaluator({ [outer.variable]: value })));
+  if (!x.some((_value, index) => lower[index] !== null && upper[index] !== null)) {
+    throw new Error("二重积分边界在当前区间没有有限实值");
+  }
   const polygonX = [...x, ...[...x].reverse()];
   const polygonY = [...upper, ...[...lower].reverse()];
   return {
@@ -163,6 +175,9 @@ async function constraintRegionPlot(
   if (!region || region.constraints.length === 0) throw new Error("请至少输入一条积分区域约束");
   if (region.ranges.length !== dimensionCount) throw new Error(`当前区域需要 ${dimensionCount} 个扫描范围`);
   const parsed = region.constraints.map(parseConstraint);
+  if (parsed.some((constraint) => constraint.operator === "=")) {
+    throw new Error("二重、三重积分区域必须由不等式围成；单独等式是零测集，不能表示面积或体积");
+  }
   const evaluators = await Promise.all(
     parsed.map(async (constraint) => ({
       constraint,
@@ -179,12 +194,17 @@ async function constraintRegionPlot(
   );
   const maxSpan = Math.max(...ranges.map((range) => range.upperValue - range.lowerValue));
   const tolerance = maxSpan * 0.006;
-  const violationAt = (scope: Record<string, number>) =>
-    Math.max(
-      ...evaluators.map(({ constraint, left, right }) =>
-        constraintViolation(constraint, left(scope), right(scope), tolerance),
-      ),
-    );
+  const outsideViolation = Math.max(maxSpan, 1);
+  const violationAt = (scope: Record<string, number>) => {
+    const violations = evaluators.map(({ constraint, left, right }) => {
+      const leftValue = left(scope);
+      const rightValue = right(scope);
+      if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return outsideViolation;
+      const violation = constraintViolation(constraint, leftValue, rightValue, tolerance);
+      return Number.isFinite(violation) ? violation : outsideViolation;
+    });
+    return Math.max(...violations);
+  };
 
   if (spec.type === "double") {
     const [xRange, yRange] = ranges;
@@ -402,7 +422,10 @@ async function implicitRegionPlot(
   }));
   const satisfiesInequalities = (values: ReturnType<typeof evaluateAll>) =>
     values.every(({ constraint, left, right }) =>
-      constraint.operator === "=" || constraintViolation(constraint, left, right, equalityTolerance) <= 0,
+      constraint.operator === "="
+      || (Number.isFinite(left)
+        && Number.isFinite(right)
+        && constraintViolation(constraint, left, right, equalityTolerance) <= 0),
     );
 
   if (spec.type === "surface") {
@@ -517,22 +540,50 @@ async function implicitRegionPlot(
     const threeValues: number[] = [];
     const clipEvaluators = inequalityEvaluators;
     const clipFields = clipEvaluators.map(() => [] as number[]);
+    const finiteSurfaceMask: boolean[] = [];
+    const outsideValue = Math.max(maxSpan, 1);
     let visibleSamples = 0;
     for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
       const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
       const primary = values.find(({ constraint }) => constraint.operator === "=")!;
       const allowed = satisfiesInequalities(values);
       const surfaceValue = primary.left - primary.right;
+      const finiteSurface = Number.isFinite(surfaceValue);
       x.push(xValue); y.push(yValue); z.push(zValue);
-      value.push(allowed ? surfaceValue : null);
-      threeValues.push(surfaceValue);
+      value.push(allowed && finiteSurface ? surfaceValue : null);
+      threeValues.push(finiteSurface ? surfaceValue : outsideValue);
+      finiteSurfaceMask.push(finiteSurface);
       clipEvaluators.forEach(({ constraint }, index) => {
         const evaluated = values.find((value) => value.constraint === constraint)!;
-        clipFields[index].push(constraintViolation(constraint, evaluated.left, evaluated.right, equalityTolerance));
+        const violation = constraintViolation(constraint, evaluated.left, evaluated.right, equalityTolerance);
+        clipFields[index].push(Number.isFinite(violation) ? violation : outsideValue);
       });
-      if (allowed && Math.abs(surfaceValue) <= equalityTolerance * 2) visibleSamples += 1;
+      if (allowed && finiteSurface && Math.abs(surfaceValue) <= equalityTolerance * 2) visibleSamples += 1;
     }
     if (visibleSamples === 0) throw new Error("当前扫描范围内没有找到满足条件的曲面");
+    if (finiteSurfaceMask.some((isFinite) => !isFinite)) {
+      const validityClip = Array.from({ length: finiteSurfaceMask.length }, () => -1);
+      const indexOf = (xIndex: number, yIndex: number, zIndex: number) =>
+        xIndex + yIndex * count + zIndex * count * count;
+      for (let zIndex = 0; zIndex < count; zIndex += 1) {
+        for (let yIndex = 0; yIndex < count; yIndex += 1) {
+          for (let xIndex = 0; xIndex < count; xIndex += 1) {
+            if (finiteSurfaceMask[indexOf(xIndex, yIndex, zIndex)]) continue;
+            for (let dz = -1; dz <= 1; dz += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+              const neighborX = xIndex + dx;
+              const neighborY = yIndex + dy;
+              const neighborZ = zIndex + dz;
+              if (
+                neighborX >= 0 && neighborX < count
+                && neighborY >= 0 && neighborY < count
+                && neighborZ >= 0 && neighborZ < count
+              ) validityClip[indexOf(neighborX, neighborY, neighborZ)] = 1;
+            }
+          }
+        }
+      }
+      clipFields.push(validityClip);
+    }
     return {
       data: [{
         type: "isosurface", x, y, z, value, isomin: 0, isomax: 0,
@@ -673,7 +724,96 @@ async function implicitRegionPlot(
   }
 }
 
+type TripleBoundaryKind =
+  | "inner-upper"
+  | "inner-lower"
+  | "middle-upper"
+  | "middle-lower"
+  | "outer-upper"
+  | "outer-lower";
+
+type NullablePointGrid = Array<Array<Point3 | null>>;
+
+interface TripleBoundarySurface {
+  kind: TripleBoundaryKind;
+  points: NullablePointGrid;
+}
+
+function splitPointGrid(points: NullablePointGrid) {
+  const coordinate = (axis: 0 | 1 | 2) => points.map((row) =>
+    row.map((point) => point?.[axis] ?? null),
+  );
+  return { x: coordinate(0), y: coordinate(1), z: coordinate(2) };
+}
+
+function triangleDoubleArea(first: Point3, second: Point3, third: Point3) {
+  const firstEdge = [
+    second[0] - first[0],
+    second[1] - first[1],
+    second[2] - first[2],
+  ] as Point3;
+  const secondEdge = [
+    third[0] - first[0],
+    third[1] - first[1],
+    third[2] - first[2],
+  ] as Point3;
+  return Math.hypot(
+    firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
+    firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
+    firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0],
+  );
+}
+
+function hasNonDegenerateArea(points: NullablePointGrid) {
+  const finitePoints = points.flat().filter((point): point is Point3 => point !== null);
+  if (finitePoints.length < 3) return false;
+  const spans = ([0, 1, 2] as const).map((axis) => {
+    const values = finitePoints.map((point) => point[axis]);
+    return Math.max(...values) - Math.min(...values);
+  });
+  const characteristicLength = Math.max(...spans);
+  const tolerance = Math.max(1e-18, characteristicLength ** 2 * 1e-10);
+  for (let row = 0; row < points.length - 1; row += 1) {
+    const columnCount = Math.min(points[row].length, points[row + 1].length);
+    for (let column = 0; column < columnCount - 1; column += 1) {
+      const topLeft = points[row][column];
+      const topRight = points[row][column + 1];
+      const bottomLeft = points[row + 1][column];
+      const bottomRight = points[row + 1][column + 1];
+      if (
+        topLeft && bottomLeft && bottomRight
+        && triangleDoubleArea(topLeft, bottomLeft, bottomRight) > tolerance
+      ) return true;
+      if (
+        topLeft && bottomRight && topRight
+        && triangleDoubleArea(topLeft, bottomRight, topRight) > tolerance
+      ) return true;
+    }
+  }
+  return false;
+}
+
+function createTripleSurfaceTrace(
+  surface: TripleBoundarySurface,
+  variables: { outer: string; middle: string; inner: string },
+) {
+  if (!hasNonDegenerateArea(surface.points)) return null;
+  return {
+    type: "surface" as const,
+    ...splitPointGrid(surface.points),
+    meta: { boundaryKind: surface.kind },
+    showscale: false,
+    opacity: 1,
+    connectgaps: false,
+    colorscale: [[0, "#4f86f7"], [1, "#4f86f7"]],
+    flatshading: false,
+    lighting: { ambient: 0.78, diffuse: 0.72, roughness: 0.82, specular: 0.12, fresnel: 0.04 },
+    hovertemplate: `${variables.outer}=%{x:.3g}<br>${variables.middle}=%{y:.3g}<br>${variables.inner}=%{z:.3g}<extra></extra>`,
+  };
+}
+
 async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
+  if (spec.bounds.length !== 3) throw new Error("三重积分需要内、中、外三层积分上下界");
   const [inner, middle, outer] = spec.bounds;
   const [outerLower, outerUpper] = await evaluateBound(outer);
   const [middleLower, middleUpper, innerLower, innerUpper] = await Promise.all([
@@ -682,60 +822,115 @@ async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
     createEvaluator(inner.lower),
     createEvaluator(inner.upper),
   ]);
-  const xValues = linspace(outerLower, outerUpper, 36);
-  const xGrid: number[][] = [];
-  const yGrid: number[][] = [];
-  const lowerGrid: number[][] = [];
-  const upperGrid: number[][] = [];
+  const outerValues = linspace(outerLower, outerUpper, 56);
+  const middleResolution = 48;
+  const verticalFractions = linspace(0, 1, 24);
+  const upperPoints: NullablePointGrid = [];
+  const lowerPoints: NullablePointGrid = [];
+  let validSamples = 0;
 
-  for (const outerValue of xValues) {
-    const outerScope = { [outer.variable]: outerValue };
-    const low = middleLower(outerScope);
-    const high = middleUpper(outerScope);
-    const middleValues = linspace(low, high, 34);
-    xGrid.push(middleValues.map(() => outerValue));
-    yGrid.push(middleValues);
-    lowerGrid.push(
-      middleValues.map((middleValue) =>
-        innerLower({ ...outerScope, [middle.variable]: middleValue }),
-      ),
-    );
-    upperGrid.push(
-      middleValues.map((middleValue) =>
-        innerUpper({ ...outerScope, [middle.variable]: middleValue }),
-      ),
-    );
-  }
-
-  const surfaceBase = {
-    type: "surface" as const,
-    x: xGrid,
-    y: yGrid,
-    showscale: false,
-    hovertemplate: `${outer.variable}=%{x:.3g}<br>${middle.variable}=%{y:.3g}<br>${inner.variable}=%{z:.3g}<extra></extra>`,
+  const evaluateInnerPair = (scope: Record<string, number>) => {
+    const lowerValue = innerLower(scope);
+    const upperValue = innerUpper(scope);
+    return Number.isFinite(lowerValue) && Number.isFinite(upperValue) && lowerValue <= upperValue
+      ? [lowerValue, upperValue] as const
+      : null;
   };
+
+  const middleRange = (outerValue: number) => {
+    const scope = { [outer.variable]: outerValue };
+    const lowerValue = middleLower(scope);
+    const upperValue = middleUpper(scope);
+    return Number.isFinite(lowerValue) && Number.isFinite(upperValue) && lowerValue <= upperValue
+      ? [lowerValue, upperValue] as const
+      : null;
+  };
+
+  for (const outerValue of outerValues) {
+    const range = middleRange(outerValue);
+    const middleValues = range
+      ? linspace(range[0], range[1], middleResolution)
+      : Array.from({ length: middleResolution }, () => null);
+    const upperRow: Array<Point3 | null> = [];
+    const lowerRow: Array<Point3 | null> = [];
+    for (const middleValue of middleValues) {
+      if (middleValue === null) {
+        upperRow.push(null);
+        lowerRow.push(null);
+        continue;
+      }
+      const pair = evaluateInnerPair({
+        [outer.variable]: outerValue,
+        [middle.variable]: middleValue,
+      });
+      if (!pair) {
+        upperRow.push(null);
+        lowerRow.push(null);
+        continue;
+      }
+      validSamples += 1;
+      lowerRow.push([outerValue, middleValue, pair[0]]);
+      upperRow.push([outerValue, middleValue, pair[1]]);
+    }
+    upperPoints.push(upperRow);
+    lowerPoints.push(lowerRow);
+  }
+  if (validSamples === 0) throw new Error("三重积分边界在当前区域没有有限实值");
+
+  const sampleMiddleBoundary = (useUpper: boolean): NullablePointGrid => outerValues.map((outerValue) => {
+    const range = middleRange(outerValue);
+    if (!range) return verticalFractions.map(() => null);
+    const middleValue = useUpper ? range[1] : range[0];
+    const pair = evaluateInnerPair({
+      [outer.variable]: outerValue,
+      [middle.variable]: middleValue,
+    });
+    if (!pair) return verticalFractions.map(() => null);
+    return verticalFractions.map((fraction) => [
+      outerValue,
+      middleValue,
+      pair[0] + (pair[1] - pair[0]) * fraction,
+    ] as Point3);
+  });
+
+  const sampleOuterBoundary = (outerValue: number): NullablePointGrid => {
+    const range = middleRange(outerValue);
+    const middleValues = range
+      ? linspace(range[0], range[1], middleResolution)
+      : Array.from({ length: middleResolution }, () => null);
+    return middleValues.map((middleValue) => {
+      if (middleValue === null) return verticalFractions.map(() => null);
+      const pair = evaluateInnerPair({
+        [outer.variable]: outerValue,
+        [middle.variable]: middleValue,
+      });
+      if (!pair) return verticalFractions.map(() => null);
+      return verticalFractions.map((fraction) => [
+        outerValue,
+        middleValue,
+        pair[0] + (pair[1] - pair[0]) * fraction,
+      ] as Point3);
+    });
+  };
+
+  const candidates: TripleBoundarySurface[] = [
+    { kind: "inner-upper", points: upperPoints },
+    { kind: "inner-lower", points: lowerPoints },
+    { kind: "middle-upper", points: sampleMiddleBoundary(true) },
+    { kind: "middle-lower", points: sampleMiddleBoundary(false) },
+    { kind: "outer-upper", points: sampleOuterBoundary(outerUpper) },
+    { kind: "outer-lower", points: sampleOuterBoundary(outerLower) },
+  ];
+  const data = candidates
+    .map((surface) => createTripleSurfaceTrace(surface, {
+      outer: outer.variable,
+      middle: middle.variable,
+      inner: inner.variable,
+    }))
+    .filter((trace): trace is NonNullable<typeof trace> => trace !== null);
+
   return {
-    data: [
-      {
-        ...surfaceBase,
-        z: upperGrid,
-        opacity: 0.72,
-        colorscale: [
-          [0, "#8fb2ff"],
-          [1, BLUE],
-        ],
-        contours: { z: { show: true, color: "rgba(16,42,76,.24)", width: 1 } },
-      },
-      {
-        ...surfaceBase,
-        z: lowerGrid,
-        opacity: 0.35,
-        colorscale: [
-          [0, "#dbe8ff"],
-          [1, "#76a1ff"],
-        ],
-      },
-    ],
+    data,
     layout: {
       ...commonLayout,
       margin: { l: 8, r: 8, t: 12, b: 8 },
@@ -768,16 +963,20 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     return [xEval(scope), yEval(scope), zEval(scope)] as Point3;
   });
   const points = direction === 1 ? evaluatedPoints : [...evaluatedPoints].reverse();
-  const x = points.map((point) => point[0]);
-  const y = points.map((point) => point[1]);
-  const z = points.map((point) => point[2]);
-  const isPlanar = z.every((value) => Math.abs(value) < 1e-10);
+  const finitePoints = points.filter(isFinitePoint);
+  if (finitePoints.length < 2) throw new Error("参数曲线在当前区间没有足够的有限实值");
+  const x = points.map((point) => isFinitePoint(point) ? point[0] : null);
+  const y = points.map((point) => isFinitePoint(point) ? point[1] : null);
+  const z = points.map((point) => isFinitePoint(point) ? point[2] : null);
+  const isPlanar = finitePoints.every((point) => Math.abs(point[2]) < 1e-10);
+  const start = finitePoints[0];
+  const end = finitePoints.at(-1)!;
   const endpointTrace: Record<string, unknown> = isPlanar
     ? {
         type: "scatter",
         mode: "markers+text",
-        x: [x[0], x.at(-1)!],
-        y: [y[0], y.at(-1)!],
+        x: [start[0], end[0]],
+        y: [start[1], end[1]],
         text: ["起点", "终点"],
         textposition: "top center",
         marker: { color: ["#229a5b", BLUE], size: 9 },
@@ -785,9 +984,9 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     : {
         type: "scatter3d",
         mode: "markers+text",
-        x: [x[0], x.at(-1)!],
-        y: [y[0], y.at(-1)!],
-        z: [z[0], z.at(-1)!],
+        x: [start[0], end[0]],
+        y: [start[1], end[1]],
+        z: [start[2], end[2]],
         text: ["起点", "终点"],
         marker: { color: ["#229a5b", BLUE], size: 5 },
       };
@@ -795,10 +994,25 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     ? { type: "scatter", mode: "lines", x, y, line: { color: BLUE, width: 4 } }
     : { type: "scatter3d", mode: "lines", x, y, z, line: { color: BLUE, width: 7 } };
 
-  const ranges = curveRanges(points);
+  const ranges = curveRanges(finitePoints);
   const maxSpan = Math.max(...ranges.map((range) => range.upper - range.lower));
-  const closed = distance3(points[0], points.at(-1)!) < maxSpan * 1e-4;
-  const threePoints = closed ? points.slice(0, -1) : points;
+  const segments: Point3[][] = [];
+  let segment: Point3[] = [];
+  for (const point of points) {
+    if (isFinitePoint(point)) {
+      segment.push(point);
+    } else if (segment.length > 0) {
+      if (segment.length >= 2) segments.push(segment);
+      segment = [];
+    }
+  }
+  if (segment.length >= 2) segments.push(segment);
+  if (segments.length === 0) throw new Error("参数曲线在当前区间没有连续的有限线段");
+  const closed = segments.length === 1 && distance3(segments[0][0], segments[0].at(-1)!) < maxSpan * 1e-4;
+  const threePaths = segments.map((path) => ({
+    points: closed ? path.slice(0, -1) : path,
+    closed,
+  }));
   return {
     data: [curveTrace, endpointTrace],
     layout: isPlanar
@@ -822,7 +1036,7 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     dimension: isPlanar ? "2d" : "3d",
     summary: `绘制参数 ${spec.parameter.variable} 从 ${spec.parameter.lower} 到 ${spec.parameter.upper} 的有向曲线。`,
     threeCurve: isPlanar ? undefined : {
-      paths: [{ points: threePoints, closed }],
+      paths: threePaths,
       ranges,
       tubeRadius: maxSpan * 0.0075,
       direction,
@@ -841,15 +1055,27 @@ async function surfacePlot(spec: Extract<IntegralSpec, { type: "surface" }>) {
   ]);
   const uValues = linspace(uLower, uUpper, 38);
   const vValues = linspace(vLower, vUpper, 42);
-  const xGrid: number[][] = [];
-  const yGrid: number[][] = [];
-  const zGrid: number[][] = [];
+  const xGrid: Array<Array<number | null>> = [];
+  const yGrid: Array<Array<number | null>> = [];
+  const zGrid: Array<Array<number | null>> = [];
+  let validSamples = 0;
   for (const v of vValues) {
-    const scopes = uValues.map((u) => ({ [uBound.variable]: u, [vBound.variable]: v }));
-    xGrid.push(scopes.map(xEval));
-    yGrid.push(scopes.map(yEval));
-    zGrid.push(scopes.map(zEval));
+    const xRow: Array<number | null> = [];
+    const yRow: Array<number | null> = [];
+    const zRow: Array<number | null> = [];
+    for (const u of uValues) {
+      const scope = { [uBound.variable]: u, [vBound.variable]: v };
+      const point = [xEval(scope), yEval(scope), zEval(scope)] as Point3;
+      if (isFinitePoint(point)) {
+        validSamples += 1;
+        xRow.push(point[0]); yRow.push(point[1]); zRow.push(point[2]);
+      } else {
+        xRow.push(null); yRow.push(null); zRow.push(null);
+      }
+    }
+    xGrid.push(xRow); yGrid.push(yRow); zGrid.push(zRow);
   }
+  if (validSamples === 0) throw new Error("参数曲面在当前区域没有有限实值");
   return {
     data: [
       {

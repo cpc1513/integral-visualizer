@@ -167,6 +167,18 @@ export function ThreeIsosurfaceCanvas({
         controls.minDistance = maxSpan * 0.35;
         controls.maxDistance = maxSpan * 8;
 
+        let frame = 0;
+        const render = () => {
+          frame = 0;
+          if (document.hidden) return;
+          controls.update();
+          renderer.render(scene, camera);
+        };
+        const requestRender = () => {
+          if (!frame && !document.hidden) frame = window.requestAnimationFrame(render);
+        };
+        controls.addEventListener("change", requestRender);
+
         const resetView = () => {
           const distance = maxSpan * 1.72;
           camera.position.set(
@@ -176,6 +188,7 @@ export function ThreeIsosurfaceCanvas({
           );
           controls.target.set(centers[0], centers[1], centers[2]);
           controls.update();
+          requestRender();
         };
         resetView();
         callbacksRef.current.registerReset(resetView);
@@ -186,24 +199,25 @@ export function ThreeIsosurfaceCanvas({
           renderer.setSize(width, height, false);
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
+          requestRender();
         };
         resize();
         const resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(host);
 
-        let frame = 0;
-        const animate = () => {
-          frame = window.requestAnimationFrame(animate);
-          controls.update();
-          renderer.render(scene, camera);
+        const handleVisibilityChange = () => {
+          if (!document.hidden) requestRender();
         };
-        animate();
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        requestRender();
         callbacksRef.current.onReady();
 
         cleanup = () => {
           window.cancelAnimationFrame(frame);
+          document.removeEventListener("visibilitychange", handleVisibilityChange);
           resizeObserver.disconnect();
           callbacksRef.current.registerReset(null);
+          controls.removeEventListener("change", requestRender);
           controls.dispose();
           labels.forEach(({ sprite, texture }) => {
             texture.dispose();

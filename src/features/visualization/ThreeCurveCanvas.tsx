@@ -149,6 +149,18 @@ export function ThreeCurveCanvas({ curveSpec, onReady, onError, registerReset }:
         controls.target.set(...centers);
         controls.minDistance = maxSpan * 0.35;
         controls.maxDistance = maxSpan * 8;
+        let frame = 0;
+        const render = () => {
+          frame = 0;
+          if (document.hidden) return;
+          controls.update();
+          renderer.render(scene, camera);
+        };
+        const requestRender = () => {
+          if (!frame && !document.hidden) frame = window.requestAnimationFrame(render);
+        };
+        controls.addEventListener("change", requestRender);
+
         const resetView = () => {
           const distance = maxSpan * 1.72;
           camera.position.set(
@@ -158,6 +170,7 @@ export function ThreeCurveCanvas({ curveSpec, onReady, onError, registerReset }:
           );
           controls.target.set(...centers);
           controls.update();
+          requestRender();
         };
         resetView();
         callbacksRef.current.registerReset(resetView);
@@ -168,23 +181,24 @@ export function ThreeCurveCanvas({ curveSpec, onReady, onError, registerReset }:
           renderer.setSize(width, height, false);
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
+          requestRender();
         };
         resize();
         const resizeObserver = new ResizeObserver(resize);
         resizeObserver.observe(host);
-        let frame = 0;
-        const animate = () => {
-          frame = window.requestAnimationFrame(animate);
-          controls.update();
-          renderer.render(scene, camera);
+        const handleVisibilityChange = () => {
+          if (!document.hidden) requestRender();
         };
-        animate();
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        requestRender();
         callbacksRef.current.onReady();
 
         cleanup = () => {
           window.cancelAnimationFrame(frame);
+          document.removeEventListener("visibilitychange", handleVisibilityChange);
           resizeObserver.disconnect();
           callbacksRef.current.registerReset(null);
+          controls.removeEventListener("change", requestRender);
           controls.dispose();
           labelTextures.forEach((texture) => texture.dispose());
           scene.traverse((object) => {
@@ -211,4 +225,3 @@ export function ThreeCurveCanvas({ curveSpec, onReady, onError, registerReset }:
 
   return <div ref={hostRef} className="three-region-host" aria-hidden="true" />;
 }
-

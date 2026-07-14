@@ -1,5 +1,6 @@
 import { AlertCircle, ArrowUpRight, BookOpenText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { MathExpression } from "../../components/math/MathExpression";
 import type { IntegralSpec, IntegralType } from "../calculator/types";
 import { RichQuestionText } from "./RichQuestionText";
 import type { RichTextBlock } from "./types";
@@ -39,7 +40,22 @@ export function QuestionCard(props: QuestionCardProps) {
           <details className="solution-disclosure">
             <summary><BookOpenText size={16} />查看答案与解析</summary>
             <div className="solution-content">
-              {props.answer ? <p className="computer-answer"><strong>答案：</strong>{props.answer}</p> : null}
+              {props.answer ? (
+                <p className="computer-answer">
+                  <strong>答案：</strong>
+                  {/^[A-D]$/.test(props.answer.trim()) ? (
+                    props.answer.trim()
+                  ) : (
+                    <MathExpression
+                      latex={props.answer
+                        .trim()
+                        .replace(/^\$\$?|\$\$?$/g, "")
+                        .replace(/\\\\(?=[A-Za-z])/g, "\\")}
+                      label={`答案 ${props.answer}`}
+                    />
+                  )}
+                </p>
+              ) : null}
               {props.solution.length ? <RichQuestionText blocks={props.solution} /> : <p>原文未提供解析。</p>}
             </div>
           </details>

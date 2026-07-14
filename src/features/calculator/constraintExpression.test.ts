@@ -4,7 +4,7 @@ import { parseConstraint } from "./constraintExpression";
 import { getIntegralExample } from "./examples";
 import { buildPlotSpec } from "../visualization/plotSpec";
 import { clipTriangleSoup } from "../visualization/clipTriangleSoup";
-import { convertLineParameter, convertSurfaceParameter } from "./BoundsEditor";
+import { convertBoundsToConstraintRegion, convertLineParameter, convertSurfaceParameter } from "./BoundsEditor";
 
 describe("custom constraint regions", () => {
   it("safely converts recognized parameter examples", () => {
@@ -15,6 +15,46 @@ describe("custom constraint regions", () => {
     expect(convertSurfaceParameter(surface)?.constraints).toEqual([
       "z=4-(x^2+y^2)",
       "x^2+y^2\\le(2)^2",
+    ]);
+    expect(convertSurfaceParameter(surface)?.ranges[2]).toEqual({
+      variable: "z",
+      lower: "-0.5",
+      upper: "4.5",
+    });
+  });
+
+  it("does not invent fixed scan ranges when nested bounds depend on outer variables", () => {
+    const dependent = getIntegralExample("double");
+    if (dependent.type !== "double") throw new Error("unexpected example type");
+    expect(convertBoundsToConstraintRegion(dependent.bounds)).toBeNull();
+
+    dependent.bounds[0] = { ...dependent.bounds[0], upper: "xy" };
+    expect(convertBoundsToConstraintRegion(dependent.bounds)).toBeNull();
+
+    dependent.bounds = dependent.bounds.map((bound) => ({ ...bound, lower: "0", upper: "2" }));
+    expect(convertBoundsToConstraintRegion(dependent.bounds)?.ranges).toEqual([
+      { variable: "x", lower: "0", upper: "2" },
+      { variable: "y", lower: "0", upper: "2" },
+    ]);
+  });
+
+  it("only offers parameter conversion when the implicit region is equivalent", () => {
+    const line = getIntegralExample("line");
+    const surface = getIntegralExample("surface");
+    if (line.type !== "line" || surface.type !== "surface") throw new Error("unexpected example type");
+
+    line.parameter.upper = "\\frac{\\pi}{2}";
+    expect(convertLineParameter(line)).toBeNull();
+
+    surface.parameters[1].upper = "\\pi";
+    expect(convertSurfaceParameter(surface)).toBeNull();
+
+    surface.parameters[1].upper = "2\\pi";
+    surface.parameters[0].lower = "1";
+    expect(convertSurfaceParameter(surface)?.constraints).toEqual([
+      "z=4-(x^2+y^2)",
+      "x^2+y^2\\le(2)^2",
+      "x^2+y^2\\ge(1)^2",
     ]);
   });
 
@@ -80,6 +120,42 @@ describe("custom constraint regions", () => {
     expect(field[insideIndex][centerIndex]).toBeLessThanOrEqual(0);
     expect(field[0][0]).toBeGreaterThan(0);
     expect(field.at(-1)?.at(-1)).toBeGreaterThan(0);
+  });
+
+  it("rejects equality constraints that cannot define area or volume", async () => {
+    for (const type of ["double", "triple"] as const) {
+      const spec = getIntegralExample(type);
+      if (spec.type !== type) throw new Error("unexpected example type");
+      spec.regionMode = "constraints";
+      spec.constraintRegion = {
+        constraints: [type === "double" ? "x^2+y^2=1" : "x^2+y^2+z^2=1"],
+        ranges: (type === "double" ? ["x", "y"] : ["x", "y", "z"]).map((variable) => ({
+          variable,
+          lower: "-2",
+          upper: "2",
+        })),
+      };
+      await expect(buildPlotSpec(spec)).rejects.toThrow("零测集");
+      expect(() => createComputePayload(spec)).toThrow("零测集");
+    }
+  });
+
+  it("treats nonfinite constraint samples as outside instead of failing the whole region", async () => {
+    const spec = getIntegralExample("double");
+    if (spec.type !== "double") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["y\\ge0", "y\\le\\sqrt{x}", "x\\le1"],
+      ranges: [
+        { variable: "x", lower: "-1", upper: "1" },
+        { variable: "y", lower: "-1", upper: "1" },
+      ],
+    };
+    const plot = await buildPlotSpec(spec);
+    const field = (plot.data[0].z as number[][]).flat();
+    expect(field.every(Number.isFinite)).toBe(true);
+    expect(field.some((value) => value <= 0)).toBe(true);
+    expect(field.some((value) => value > 0)).toBe(true);
   });
 
   it("builds a rotatable implicit surface for a sphere", async () => {

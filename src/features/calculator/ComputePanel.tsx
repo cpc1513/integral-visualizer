@@ -22,6 +22,7 @@ interface ComputePanelProps {
   onUseNumeric: () => void;
   elapsedMs: number;
   showNumericSwitch: boolean;
+  computeBlocked?: boolean;
 }
 
 export function ComputePanel({
@@ -33,13 +34,19 @@ export function ComputePanel({
   onUseNumeric,
   elapsedMs,
   showNumericSwitch,
+  computeBlocked = false,
 }: ComputePanelProps) {
   const busy = ["loading-python", "loading-symbolics", "computing", "loading-numerics"].includes(status);
   const statusLabel = status === "complete" && result?.status === "numeric" ? "Python · SciPy" : statusLabels[status];
   return (
     <>
       <div className="compute-actions">
-      <button className={`compute-button${busy ? " is-stopping" : ""}`} type="button" onClick={busy ? onStop : onCompute}>
+      <button
+        className={`compute-button${busy ? " is-stopping" : ""}`}
+        type="button"
+        disabled={!busy && computeBlocked}
+        onClick={busy ? onStop : onCompute}
+      >
         {busy ? (
           <Square aria-hidden="true" size={16} />
         ) : (

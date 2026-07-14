@@ -67,7 +67,7 @@ function materialize<T extends IntegralType>(type: T): SpecFor<T> {
   return { ...spec, latex: generateFormulaLatex(spec) } as SpecFor<T>;
 }
 
-export const integralExamples: Record<IntegralType, IntegralSpec> = {
+export const integralExamples: { [T in IntegralType]: SpecFor<T> } = {
   ordinary: materialize("ordinary"),
   double: materialize("double"),
   triple: materialize("triple"),
@@ -77,6 +77,6 @@ export const integralExamples: Record<IntegralType, IntegralSpec> = {
 
 export const DEFAULT_INTEGRAL_TYPE: IntegralType = "triple";
 
-export function getIntegralExample(type: IntegralType): IntegralSpec {
+export function getIntegralExample<T extends IntegralType>(type: T): SpecFor<T> {
   return structuredClone(integralExamples[type]);
 }

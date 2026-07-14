@@ -15,19 +15,77 @@ const emptyCartesianRegion = (variables: string[]): ConstraintRegion => ({
   ranges: variables.map((variable) => ({ variable, lower: "-5", upper: "5" })),
 });
 
-const boundsToConstraintRegion = (bounds: VariableBound[]): ConstraintRegion => ({
-  constraints: bounds.flatMap((bound) => [
-    `${bound.variable}\\ge ${bound.lower}`,
-    `${bound.variable}\\le ${bound.upper}`,
-  ]),
-  ranges: [...bounds].reverse().map((bound, index) => ({
-    variable: bound.variable,
-    lower: index === 0 ? bound.lower : "-5",
-    upper: index === 0 ? bound.upper : "5",
-  })),
-});
-
 const compactLatex = (value: string) => value.replace(/\s+/g, "").replace(/[{}]/g, "");
+
+const usesVariable = (expression: string, variable: string) => {
+  if (!/^[A-Za-z]$/.test(variable)) return true;
+  const withoutCommands = expression
+    .replace(/\\[A-Za-z]+/g, "")
+    .replace(/\b(?:sqrt|sin|cos|tan|cot|log|ln|exp|abs)\b/gi, "");
+  return withoutCommands.includes(variable);
+};
+
+export function convertBoundsToConstraintRegion(bounds: VariableBound[]): ConstraintRegion | null {
+  const variables = bounds.map((bound) => compactLatex(bound.variable));
+  if (
+    variables.some((variable) => !/^[A-Za-z]$/.test(variable))
+    || bounds.some((bound) =>
+      variables.some((variable) => usesVariable(bound.lower, variable) || usesVariable(bound.upper, variable)),
+    )
+  ) {
+    return null;
+  }
+  return {
+    constraints: bounds.flatMap((bound) => [
+      `${bound.variable}\\ge ${bound.lower}`,
+      `${bound.variable}\\le ${bound.upper}`,
+    ]),
+    ranges: [...bounds].reverse().map((bound) => ({
+      variable: bound.variable,
+      lower: bound.lower,
+      upper: bound.upper,
+    })),
+  };
+}
+
+const isFullTurn = (bound: VariableBound) => {
+  const lower = compactLatex(bound.lower);
+  const upper = compactLatex(bound.upper);
+  return (lower === "0" && (upper === "2\\pi" || upper === "2pi"))
+    || ((lower === "-\\pi" || lower === "-pi") && (upper === "\\pi" || upper === "pi"));
+};
+
+const parseFiniteDecimal = (value: string) => {
+  const parsed = Number(compactLatex(value));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatNumber = (value: number) => {
+  const rounded = Math.abs(value) < 1e-12 ? 0 : Number(value.toPrecision(12));
+  return String(rounded);
+};
+
+function parseAffineRadialSquare(expression: string, radial: string, angular: string) {
+  const replaced = compactLatex(expression).replaceAll(`${radial}^2`, "q");
+  if (usesVariable(replaced, radial) || usesVariable(replaced, angular)) return null;
+  const terms = replaced.replace(/-/g, "+-").split("+").filter(Boolean);
+  let constant = 0;
+  let coefficient = 0;
+  for (const term of terms) {
+    if (!term.includes("q")) {
+      const value = Number(term);
+      if (!Number.isFinite(value)) return null;
+      constant += value;
+      continue;
+    }
+    const match = term.match(/^([+-]?)(\d*\.?\d*)\*?q$/);
+    if (!match) return null;
+    const magnitude = match[2] === "" ? 1 : Number(match[2]);
+    if (!Number.isFinite(magnitude)) return null;
+    coefficient += match[1] === "-" ? -magnitude : magnitude;
+  }
+  return { constant, coefficient };
+}
 
 export function convertLineParameter(spec: LineIntegralSpec): ConstraintRegion | null {
   const parameter = compactLatex(spec.parameter.variable);
@@ -37,13 +95,15 @@ export function convertLineParameter(spec: LineIntegralSpec): ConstraintRegion |
   const isUnitCircle =
     (x === `\\cos${parameter}` && y === `\\sin${parameter}`)
     || (x === `cos${parameter}` && y === `sin${parameter}`);
-  if (!isUnitCircle || z.includes(parameter)) return null;
+  const zValue = parseFiniteDecimal(spec.path.z);
+  if (!isUnitCircle || z.includes(parameter) || !isFullTurn(spec.parameter) || zValue === null) return null;
+  const zPadding = Math.max(1, Math.abs(zValue) * 0.1);
   return {
     constraints: ["x^2+y^2=1", `z=${spec.path.z}`],
     ranges: [
       { variable: "x", lower: "-1.2", upper: "1.2" },
       { variable: "y", lower: "-1.2", upper: "1.2" },
-      { variable: "z", lower: "-1", upper: "1" },
+      { variable: "z", lower: formatNumber(zValue - zPadding), upper: formatNumber(zValue + zPadding) },
     ],
   };
 }
@@ -58,14 +118,33 @@ export function convertSurfaceParameter(spec: SurfaceIntegralSpec): ConstraintRe
     (x === `${u}\\cos${v}` && y === `${u}\\sin${v}`)
     || (x === `${u}cos${v}` && y === `${u}sin${v}`);
   const z = compactLatex(spec.surface.z);
-  if (!radialForm || !z.includes(`${u}^2`)) return null;
+  const radialLower = parseFiniteDecimal(radial.lower);
+  const radialUpper = parseFiniteDecimal(radial.upper);
+  const affineZ = parseAffineRadialSquare(spec.surface.z, u, v);
+  if (
+    !radialForm
+    || !isFullTurn(angular)
+    || radialLower === null
+    || radialUpper === null
+    || radialLower < 0
+    || radialLower >= radialUpper
+    || !affineZ
+  ) return null;
   const implicitZ = z.replaceAll(`${u}^2`, "(x^2+y^2)");
+  const endpointValues = [radialLower, radialUpper].map((value) =>
+    affineZ.constant + affineZ.coefficient * value ** 2,
+  );
+  const zMinimum = Math.min(...endpointValues);
+  const zMaximum = Math.max(...endpointValues);
+  const zPadding = Math.max(0.5, (zMaximum - zMinimum) * 0.1);
+  const radialConstraints = [`x^2+y^2\\le(${radial.upper})^2`];
+  if (radialLower > 0) radialConstraints.push(`x^2+y^2\\ge(${radial.lower})^2`);
   return {
-    constraints: [`z=${implicitZ}`, `x^2+y^2\\le(${radial.upper})^2`],
+    constraints: [`z=${implicitZ}`, ...radialConstraints],
     ranges: [
-      { variable: "x", lower: `-${radial.upper}`, upper: radial.upper },
-      { variable: "y", lower: `-${radial.upper}`, upper: radial.upper },
-      { variable: "z", lower: "-5", upper: "5" },
+      { variable: "x", lower: formatNumber(-radialUpper), upper: formatNumber(radialUpper) },
+      { variable: "y", lower: formatNumber(-radialUpper), upper: formatNumber(radialUpper) },
+      { variable: "z", lower: formatNumber(zMinimum - zPadding), upper: formatNumber(zMaximum + zPadding) },
     ],
   };
 }
@@ -183,6 +262,7 @@ function MultipleBounds({
 }) {
   const emptyRegion = () =>
     emptyCartesianRegion([...spec.bounds].reverse().map((bound) => bound.variable));
+  const convertedRegion = convertBoundsToConstraintRegion(spec.bounds);
 
   const setRegionMode = (regionMode: "bounds" | "constraints") =>
     onChange({
@@ -226,9 +306,9 @@ function MultipleBounds({
         <ConstraintRegionEditor
           region={spec.constraintRegion ?? emptyRegion()}
           onChange={updateConstraintRegion}
-          hint={spec.type === "double" ? "添加如 x^2+y^2\\le1 的区域条件。" : "添加定义立体区域的等式或不等式。"}
+          hint={spec.type === "double" ? "添加如 x^2+y^2\\le1 的区域条件。" : "使用不等式围成立体区域；单独等式没有体积。"}
           convertLabel="从当前上下界转换"
-          onConvert={() => updateConstraintRegion(boundsToConstraintRegion(spec.bounds))}
+          onConvert={convertedRegion ? () => updateConstraintRegion(convertedRegion) : undefined}
         />
       )}
     </div>

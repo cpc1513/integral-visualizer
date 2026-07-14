@@ -6,25 +6,38 @@ type PendingRequest = {
   reject: (reason: Error) => void;
   onStatus: (status: ComputeStatus) => void;
   loadingTimeout: ReturnType<typeof setTimeout>;
+  computeTimeout: ReturnType<typeof setTimeout> | null;
 };
 
 type WorkerMessage =
   | { type: "status"; id: number; status: ComputeStatus }
   | { type: "result"; id: number; result: ComputeResult }
-  | { type: "error"; id: number; error: string };
+  | { type: "error"; id: number; error: string; fatal?: boolean };
 
 let worker: Worker | null = null;
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingRequest>();
 
-export class ComputationCancelledError extends Error {}
+export class ComputationCancelledError extends Error {
+  name = "ComputationCancelledError";
+}
+export class ComputationTimeoutError extends Error {
+  name = "ComputationTimeoutError";
+}
+
+export const COMPUTATION_TIMEOUT_MS = 120_000;
+
+function clearRequestTimers(request: PendingRequest) {
+  clearTimeout(request.loadingTimeout);
+  if (request.computeTimeout !== null) clearTimeout(request.computeTimeout);
+}
 
 function resetWorker(reason?: Error) {
   worker?.terminate();
   worker = null;
   if (reason) {
     for (const request of pendingRequests.values()) {
-      clearTimeout(request.loadingTimeout);
+      clearRequestTimers(request);
       request.reject(reason);
     }
     pendingRequests.clear();
@@ -42,13 +55,23 @@ function getWorker() {
       pending.onStatus(message.status);
       if (message.status === "computing") {
         clearTimeout(pending.loadingTimeout);
+        if (pending.computeTimeout === null) {
+          pending.computeTimeout = setTimeout(() => {
+            if (!pendingRequests.has(message.id)) return;
+            resetWorker(new ComputationTimeoutError("计算超过 120 秒，已停止并重置 Python 运行时。"));
+          }, COMPUTATION_TIMEOUT_MS);
+        }
       }
       return;
     }
-    clearTimeout(pending.loadingTimeout);
+    clearRequestTimers(pending);
     pendingRequests.delete(message.id);
     if (message.type === "result") pending.resolve(message.result);
-    else pending.reject(new Error(message.error || "Python 计算失败"));
+    else {
+      const error = new Error(message.error || "Python 计算失败");
+      if (message.fatal) resetWorker(error);
+      pending.reject(error);
+    }
   };
   worker.onerror = () => resetWorker(new Error("Python Worker 无法启动，请刷新页面后重试。"));
   return worker;
@@ -64,7 +87,7 @@ export function computeIntegral(
     const loadingTimeout = setTimeout(() => {
       resetWorker(new Error("Python 运行时加载超时，请检查网络后重试。"));
     }, 180_000);
-    pendingRequests.set(id, { resolve, reject, onStatus, loadingTimeout });
+    pendingRequests.set(id, { resolve, reject, onStatus, loadingTimeout, computeTimeout: null });
     getWorker().postMessage({
       type: "compute",
       id,
