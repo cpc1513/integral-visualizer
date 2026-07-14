@@ -211,7 +211,9 @@ async function constraintRegionPlot(
           autocontour: false,
           contours: {
             type: "constraint",
-            operation: "<=",
+            // Plotly shades the complement of the region kept by the constraint.
+            // Keeping positive violations therefore shades violation <= 0: the integral region.
+            operation: ">",
             value: 0,
             coloring: "fill",
             showlines: false,

@@ -50,7 +50,7 @@ describe("custom constraint regions", () => {
     expect(new Set(violations).size).toBeGreaterThan(100);
     expect(plot.data[0].contours).toMatchObject({
       type: "constraint",
-      operation: "<=",
+      operation: ">",
       value: 0,
       coloring: "fill",
     });
@@ -72,7 +72,7 @@ describe("custom constraint regions", () => {
     const plot = await buildPlotSpec(spec);
     expect(plot.data[0]).toMatchObject({
       type: "contour",
-      contours: { type: "constraint", operation: "<=", value: 0, coloring: "fill" },
+      contours: { type: "constraint", operation: ">", value: 0, coloring: "fill" },
     });
     const field = plot.data[0].z as number[][];
     const centerIndex = 150;
