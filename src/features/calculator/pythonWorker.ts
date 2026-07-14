@@ -57,7 +57,7 @@ def prepare_problem(payload):
         path = payload["path"]
         coordinates = Matrix([parse_math(path[axis]) for axis in ("x", "y", "z")])
         substitutions = {SYMBOLS[axis]: coordinates[index] for index, axis in enumerate(("x", "y", "z"))}
-        tangent = coordinates.diff(parameter)
+        tangent = coordinates.diff(parameter) * payload.get("orientation", 1)
         if payload.get("mode") == "work":
             field = payload["vectorField"]
             vector = Matrix([parse_math(field[key]).subs(substitutions) for key in ("p", "q", "r")])

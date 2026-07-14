@@ -291,6 +291,15 @@ function LineBounds({
           constraintRegion: nextMode === "constraints" ? spec.constraintRegion ?? emptyRegion() : spec.constraintRegion,
         })}
       />
+      <SegmentedControl
+        label="曲线方向"
+        value={(spec.orientation ?? 1) === 1 ? "positive" : "negative"}
+        options={[
+          { value: "positive", label: "正向" },
+          { value: "negative", label: "反向" },
+        ]}
+        onChange={(value) => onChange({ ...spec, orientation: value === "positive" ? 1 : -1 })}
+      />
       {regionMode === "parameter" ? (
         <>
           <div className="coordinate-grid">

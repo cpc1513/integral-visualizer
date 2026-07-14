@@ -2,7 +2,8 @@ import { MousePointer2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Data } from "plotly.js";
 import type { IntegralSpec } from "../calculator/types";
-import { buildPlotSpec, type IntegralPlotSpec, type ThreeScalarField } from "./plotSpec";
+import { buildPlotSpec, type IntegralPlotSpec, type ThreeCurveSpec, type ThreeScalarField } from "./plotSpec";
+import { ThreeCurveCanvas } from "./ThreeCurveCanvas";
 import { ThreeIsosurfaceCanvas } from "./ThreeIsosurfaceCanvas";
 
 interface VisualizationCanvasProps {
@@ -17,6 +18,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
   const fallbackPlotRef = useRef<IntegralPlotSpec | null>(null);
   const threeResetRef = useRef<(() => void) | null>(null);
   const [threeField, setThreeField] = useState<ThreeScalarField | null>(null);
+  const [threeCurve, setThreeCurve] = useState<ThreeCurveSpec | null>(null);
   const [state, setState] = useState<"empty" | "loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [summary, setSummary] = useState("正在建立积分区域模型。");
@@ -44,6 +46,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
       plotlyRef.current?.purge(host);
       fallbackPlotRef.current = null;
       setThreeField(null);
+      setThreeCurve(null);
       setSummary("添加条件后将在这里显示积分区域。");
       setError("");
       setState("empty");
@@ -54,6 +57,8 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     setError("");
     plotlyRef.current?.purge(host);
     fallbackPlotRef.current = null;
+    setThreeField(null);
+    setThreeCurve(null);
 
     buildPlotSpec(spec)
       .then(async (plotSpec) => {
@@ -63,9 +68,16 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
         setSummary(plotSpec.summary);
         if (plotSpec.threeField) {
           setThreeField(plotSpec.threeField);
+          setThreeCurve(null);
+          return;
+        }
+        if (plotSpec.threeCurve) {
+          setThreeField(null);
+          setThreeCurve(plotSpec.threeCurve);
           return;
         }
         setThreeField(null);
+        setThreeCurve(null);
         await renderWithPlotly(plotSpec, version);
       })
       .catch((reason: unknown) => {
@@ -84,7 +96,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     if (!host) return;
     const observer = new ResizeObserver(() => {
       const Plotly = plotlyRef.current;
-      if (!Plotly || threeField || !host.isConnected || !host.classList.contains("js-plotly-plot")) return;
+      if (!Plotly || threeField || threeCurve || !host.isConnected || !host.classList.contains("js-plotly-plot")) return;
       try {
         void Promise.resolve(Plotly.Plots.resize(host)).catch(() => undefined);
       } catch {
@@ -93,7 +105,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     });
     observer.observe(host);
     return () => observer.disconnect();
-  }, [threeField]);
+  }, [threeCurve, threeField]);
 
   useEffect(
     () => () => {
@@ -110,6 +122,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     const fallback = fallbackPlotRef.current;
     const version = renderVersionRef.current;
     setThreeField(null);
+    setThreeCurve(null);
     if (!fallback) {
       setError(threeError.message);
       setState("error");
@@ -129,7 +142,7 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
   }, []);
 
   const resetView = () => {
-    if (threeField && threeResetRef.current) {
+    if ((threeField || threeCurve) && threeResetRef.current) {
       threeResetRef.current();
       return;
     }
@@ -158,12 +171,20 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
       <div className="plot-stage" data-state={state}>
         <div
           ref={plotHostRef}
-          className={`plot-host${threeField ? " is-three-hidden" : ""}`}
-          aria-label={threeField ? undefined : summary}
+          className={`plot-host${threeField || threeCurve ? " is-three-hidden" : ""}`}
+          aria-label={threeField || threeCurve ? undefined : summary}
         />
         {threeField ? (
           <ThreeIsosurfaceCanvas
             field={threeField}
+            onReady={handleThreeReady}
+            onError={handleThreeError}
+            registerReset={registerThreeReset}
+          />
+        ) : null}
+        {threeCurve ? (
+          <ThreeCurveCanvas
+            curveSpec={threeCurve}
             onReady={handleThreeReady}
             onError={handleThreeError}
             registerReset={registerThreeReset}

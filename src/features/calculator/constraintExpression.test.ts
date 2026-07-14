@@ -111,7 +111,40 @@ describe("custom constraint regions", () => {
     const plot = await buildPlotSpec(spec);
     expect(plot.dimension).toBe("3d");
     expect(plot.data[0].type).toBe("scatter3d");
-    expect((plot.data[0].x as number[]).length).toBeGreaterThan(10);
+    expect(plot.data[0].mode).toBe("lines");
+    expect(plot.threeCurve?.paths).toHaveLength(1);
+    expect(plot.threeCurve?.paths[0].closed).toBe(true);
+    expect(plot.threeCurve?.paths[0].points.length).toBeGreaterThan(150);
+    const path = plot.threeCurve!.paths[0];
+    const { CatmullRomCurve3, TubeGeometry, Vector3 } = await import("three");
+    const curve = new CatmullRomCurve3(
+      path.points.map((point) => new Vector3(...point)),
+      path.closed,
+      "centripetal",
+      0.35,
+    );
+    const tube = new TubeGeometry(curve, path.points.length * 2, plot.threeCurve!.tubeRadius, 14, path.closed);
+    expect(tube.getAttribute("position").count).toBeGreaterThan(3000);
+    expect(Array.from(tube.getAttribute("normal").array).every(Number.isFinite)).toBe(true);
+    tube.dispose();
+  });
+
+  it("reverses an implicit curve without changing its geometry", async () => {
+    const spec = getIntegralExample("line");
+    if (spec.type !== "line") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["x^2+y^2+z^2=1", "x+y+z=1"],
+      ranges: ["x", "y", "z"].map((variable) => ({ variable, lower: "-3", upper: "3" })),
+    };
+    spec.orientation = 1;
+    const positive = await buildPlotSpec(spec);
+    spec.orientation = -1;
+    const negative = await buildPlotSpec(spec);
+    const positivePoints = positive.threeCurve?.paths[0].points;
+    const negativePoints = negative.threeCurve?.paths[0].points;
+    expect(positivePoints).toBeDefined();
+    expect(negativePoints).toEqual([...positivePoints!].reverse());
   });
 
   it("renders an implicitly defined and clipped surface", async () => {
@@ -224,5 +257,12 @@ describe("custom constraint regions", () => {
     const payload = createComputePayload(spec);
     expect(payload.constraintRegion?.constraints).toHaveLength(2);
     expect(payload.constraintRegion?.constraints[0].operator).toBe("<=");
+  });
+
+  it("serializes the selected line direction for parameterized work integrals", () => {
+    const spec = getIntegralExample("line");
+    if (spec.type !== "line") throw new Error("unexpected example type");
+    spec.orientation = -1;
+    expect(createComputePayload(spec).orientation).toBe(-1);
   });
 });

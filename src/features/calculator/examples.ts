@@ -37,6 +37,7 @@ const examplesWithoutFormula: ExampleInputs = {
     type: "line",
     exampleName: "单位圆周长度",
     mode: "scalar",
+    orientation: 1,
     integrand: "1",
     parameter: { variable: "t", lower: "0", upper: "2\\pi", label: "参数范围" },
     path: { x: "\\cos t", y: "\\sin t", z: "0" },

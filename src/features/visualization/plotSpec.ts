@@ -2,6 +2,7 @@ import type { Config, Layout } from "plotly.js";
 import { latexToExpression } from "../calculator/expression";
 import { constraintViolation, parseConstraint } from "../calculator/constraintExpression";
 import type { IntegralSpec, VariableBound } from "../calculator/types";
+import { traceImplicitCurves, type Point3 } from "./implicitCurveTracer";
 
 export interface IntegralPlotSpec {
   data: Array<Record<string, unknown>>;
@@ -10,6 +11,7 @@ export interface IntegralPlotSpec {
   dimension: "2d" | "3d";
   summary: string;
   threeField?: ThreeScalarField;
+  threeCurve?: ThreeCurveSpec;
 }
 
 export interface ThreeScalarField {
@@ -24,6 +26,13 @@ export interface ThreeScalarFieldRange {
   variable: string;
   lower: number;
   upper: number;
+}
+
+export interface ThreeCurveSpec {
+  paths: Array<{ points: Point3[]; closed: boolean }>;
+  ranges: [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange];
+  tubeRadius: number;
+  direction: 1 | -1;
 }
 
 type Evaluator = (scope?: Record<string, number>) => number;
@@ -346,6 +355,22 @@ async function constraintRegionPlot(
   };
 }
 
+function curveRanges(points: Point3[]): [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange] {
+  const variables = ["x", "y", "z"];
+  const minimums = [0, 1, 2].map((axis) => Math.min(...points.map((point) => point[axis])));
+  const maximums = [0, 1, 2].map((axis) => Math.max(...points.map((point) => point[axis])));
+  const maxSpan = Math.max(...maximums.map((maximum, axis) => maximum - minimums[axis]), 1);
+  return variables.map((variable, axis) => {
+    const span = maximums[axis] - minimums[axis];
+    const padding = Math.max(span * 0.12, maxSpan * 0.08);
+    return { variable, lower: minimums[axis] - padding, upper: maximums[axis] + padding };
+  }) as [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange];
+}
+
+function distance3(first: Point3, second: Point3) {
+  return Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
+}
+
 async function implicitRegionPlot(
   spec: Extract<IntegralSpec, { type: "line" | "surface" }>,
 ): Promise<IntegralPlotSpec> {
@@ -546,42 +571,108 @@ async function implicitRegionPlot(
     };
   }
 
-  const count = 45;
-  const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
-  const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
-  const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
-  const x: number[] = [];
-  const y: number[] = [];
-  const z: number[] = [];
-  for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
-    const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
-    const equalityValues = values.filter(({ constraint }) => constraint.operator === "=");
-    if (
-      satisfiesInequalities(values)
-      && equalityValues.every(({ left, right }) => Math.abs(left - right) <= equalityTolerance)
-    ) {
-      x.push(xValue); y.push(yValue); z.push(zValue);
-    }
-  }
-  if (x.length === 0) throw new Error("当前扫描范围内没有找到两曲面的交线，请适当缩小范围");
-  return {
-    data: [{
-      type: "scatter3d", mode: "markers", x, y, z,
-      marker: { color: BLUE, size: 3.5, opacity: 0.9 },
-      hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",
-    }],
-    layout: {
-      ...commonLayout, margin: { l: 8, r: 8, t: 12, b: 8 },
-      scene: {
-        xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
-        yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
-        zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
-        bgcolor: "#f8fafc", aspectmode: "data",
+  const primaryEqualities = evaluators.filter(({ constraint }) => constraint.operator === "=").slice(0, 2);
+  const remainingConstraints = evaluators.filter((evaluator) => !primaryEqualities.includes(evaluator));
+  const pointScope = ([x, y, z]: Point3) => ({
+    [xRange.variable]: x,
+    [yRange.variable]: y,
+    [zRange.variable]: z,
+  });
+  const equationFunctions = primaryEqualities.map(({ left, right }) => (point: Point3) => {
+    const scope = pointScope(point);
+    return left(scope) - right(scope);
+  }) as [(point: Point3) => number, (point: Point3) => number];
+  const inequalityFunctions = remainingConstraints.map(({ constraint, left, right }) => (point: Point3) => {
+    const scope = pointScope(point);
+    return constraintViolation(constraint, left(scope), right(scope), equalityTolerance);
+  });
+  try {
+    const traced = traceImplicitCurves({
+      equations: equationFunctions,
+      inequalities: inequalityFunctions,
+      ranges: [
+        { lower: xRange.lowerValue, upper: xRange.upperValue },
+        { lower: yRange.lowerValue, upper: yRange.upperValue },
+        { lower: zRange.lowerValue, upper: zRange.upperValue },
+      ],
+    });
+    const direction = spec.orientation ?? 1;
+    const paths = traced.map((path) => ({
+      closed: path.closed,
+      points: direction === 1 ? path.points : [...path.points].reverse(),
+    }));
+    const displayRanges = curveRanges(paths.flatMap((path) => path.points));
+    const displaySpan = Math.max(...displayRanges.map((range) => range.upper - range.lower));
+    return {
+      data: paths.map((path) => ({
+        type: "scatter3d",
+        mode: "lines",
+        x: path.points.map((point) => point[0]),
+        y: path.points.map((point) => point[1]),
+        z: path.points.map((point) => point[2]),
+        line: { color: BLUE, width: 7 },
+        hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",
+      })),
+      layout: {
+        ...commonLayout, margin: { l: 8, r: 8, t: 12, b: 8 },
+        scene: {
+          xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+          yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+          zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+          bgcolor: "#f8fafc", aspectmode: "data",
+        },
       },
-    },
-    config: commonConfig, dimension: "3d",
-    summary: `显示满足 ${region.constraints.join("，")} 的隐式曲线，可拖动旋转。`,
-  };
+      config: commonConfig,
+      dimension: "3d",
+      summary: `显示满足 ${region.constraints.join("，")} 的连续隐式交线，可拖动旋转。`,
+      threeCurve: {
+        paths,
+        ranges: displayRanges.map((range, axis) => ({
+          ...range,
+          variable: [xRange.variable, yRange.variable, zRange.variable][axis],
+        })) as [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange],
+        tubeRadius: displaySpan * 0.008,
+        direction,
+      },
+    };
+  } catch {
+    const count = 45;
+    const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
+    const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
+    const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
+    const x: number[] = [];
+    const y: number[] = [];
+    const z: number[] = [];
+    for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
+      const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
+      const equalityValues = values.filter(({ constraint }) => constraint.operator === "=");
+      if (
+        satisfiesInequalities(values)
+        && equalityValues.every(({ left, right }) => Math.abs(left - right) <= equalityTolerance)
+      ) {
+        x.push(xValue); y.push(yValue); z.push(zValue);
+      }
+    }
+    if (x.length === 0) throw new Error("当前扫描范围内没有找到两曲面的交线，请适当缩小范围");
+    return {
+      data: [{
+        type: "scatter3d", mode: "markers", x, y, z,
+        marker: { color: BLUE, size: 3.5, opacity: 0.9 },
+        hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",
+      }],
+      layout: {
+        ...commonLayout, margin: { l: 8, r: 8, t: 12, b: 8 },
+        scene: {
+          xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+          yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+          zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+          bgcolor: "#f8fafc", aspectmode: "data",
+        },
+      },
+      config: commonConfig, dimension: "3d",
+      summary: `显示满足 ${region.constraints.join("，")} 的隐式曲线（兼容点云模式）。`,
+    };
+  }
 }
 
 async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
@@ -673,9 +764,15 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     createEvaluator(spec.path.z),
   ]);
   const parameterValues = linspace(lower, upper, 220);
-  const x = parameterValues.map((value) => xEval({ [spec.parameter.variable]: value }));
-  const y = parameterValues.map((value) => yEval({ [spec.parameter.variable]: value }));
-  const z = parameterValues.map((value) => zEval({ [spec.parameter.variable]: value }));
+  const direction = spec.orientation ?? 1;
+  const evaluatedPoints = parameterValues.map((value) => {
+    const scope = { [spec.parameter.variable]: value };
+    return [xEval(scope), yEval(scope), zEval(scope)] as Point3;
+  });
+  const points = direction === 1 ? evaluatedPoints : [...evaluatedPoints].reverse();
+  const x = points.map((point) => point[0]);
+  const y = points.map((point) => point[1]);
+  const z = points.map((point) => point[2]);
   const isPlanar = z.every((value) => Math.abs(value) < 1e-10);
   const endpointTrace: Record<string, unknown> = isPlanar
     ? {
@@ -700,6 +797,10 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     ? { type: "scatter", mode: "lines", x, y, line: { color: BLUE, width: 4 } }
     : { type: "scatter3d", mode: "lines", x, y, z, line: { color: BLUE, width: 7 } };
 
+  const ranges = curveRanges(points);
+  const maxSpan = Math.max(...ranges.map((range) => range.upper - range.lower));
+  const closed = distance3(points[0], points.at(-1)!) < maxSpan * 1e-4;
+  const threePoints = closed ? points.slice(0, -1) : points;
   return {
     data: [curveTrace, endpointTrace],
     layout: isPlanar
@@ -722,6 +823,12 @@ async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
     config: commonConfig,
     dimension: isPlanar ? "2d" : "3d",
     summary: `绘制参数 ${spec.parameter.variable} 从 ${spec.parameter.lower} 到 ${spec.parameter.upper} 的有向曲线。`,
+    threeCurve: isPlanar ? undefined : {
+      paths: [{ points: threePoints, closed }],
+      ranges,
+      tubeRadius: maxSpan * 0.0075,
+      direction,
+    },
   } satisfies IntegralPlotSpec;
 }
 

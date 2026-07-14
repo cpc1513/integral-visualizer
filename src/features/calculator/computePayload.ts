@@ -67,6 +67,7 @@ export function createComputePayload(spec: IntegralSpec): ComputePayload {
         q: latexToExpression(spec.vectorField.q),
         r: latexToExpression(spec.vectorField.r),
       },
+      orientation: spec.orientation ?? 1,
     };
   }
   return {

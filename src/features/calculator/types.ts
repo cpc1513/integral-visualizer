@@ -46,6 +46,7 @@ export interface MultipleIntegralSpec<T extends "double" | "triple" = "double" |
 export interface LineIntegralSpec extends BaseIntegralSpec {
   type: "line";
   mode: "scalar" | "work";
+  orientation?: 1 | -1;
   regionMode?: "parameter" | "constraints";
   constraintRegion?: ConstraintRegion;
   parameter: VariableBound;
