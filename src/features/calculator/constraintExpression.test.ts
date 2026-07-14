@@ -57,6 +57,8 @@ describe("custom constraint regions", () => {
     expect(plot.dimension).toBe("3d");
     expect(plot.data[0].type).toBe("isosurface");
     expect(plot.data).toHaveLength(1);
+    expect(plot.data[0].surface).toEqual({ count: 1, fill: 1 });
+    expect(plot.data[0].opacity).toBe(1);
     expect((plot.data[0].value as number[]).every(Number.isFinite)).toBe(true);
   });
 
@@ -85,6 +87,8 @@ describe("custom constraint regions", () => {
     const plot = await buildPlotSpec(spec);
     expect(plot.dimension).toBe("3d");
     expect(plot.data[0].type).toBe("isosurface");
+    expect(plot.data[0].surface).toEqual({ count: 1, fill: 1 });
+    expect(plot.data[0].opacity).toBe(1);
     expect((plot.data[0].value as Array<number | null>).some((value) => value === null)).toBe(true);
   });
 
