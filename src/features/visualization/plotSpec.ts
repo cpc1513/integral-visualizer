@@ -724,96 +724,8 @@ async function implicitRegionPlot(
   }
 }
 
-type TripleBoundaryKind =
-  | "inner-upper"
-  | "inner-lower"
-  | "middle-upper"
-  | "middle-lower"
-  | "outer-upper"
-  | "outer-lower";
-
-type NullablePointGrid = Array<Array<Point3 | null>>;
-
-interface TripleBoundarySurface {
-  kind: TripleBoundaryKind;
-  points: NullablePointGrid;
-}
-
-function splitPointGrid(points: NullablePointGrid) {
-  const coordinate = (axis: 0 | 1 | 2) => points.map((row) =>
-    row.map((point) => point?.[axis] ?? null),
-  );
-  return { x: coordinate(0), y: coordinate(1), z: coordinate(2) };
-}
-
-function triangleDoubleArea(first: Point3, second: Point3, third: Point3) {
-  const firstEdge = [
-    second[0] - first[0],
-    second[1] - first[1],
-    second[2] - first[2],
-  ] as Point3;
-  const secondEdge = [
-    third[0] - first[0],
-    third[1] - first[1],
-    third[2] - first[2],
-  ] as Point3;
-  return Math.hypot(
-    firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
-    firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
-    firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0],
-  );
-}
-
-function hasNonDegenerateArea(points: NullablePointGrid) {
-  const finitePoints = points.flat().filter((point): point is Point3 => point !== null);
-  if (finitePoints.length < 3) return false;
-  const spans = ([0, 1, 2] as const).map((axis) => {
-    const values = finitePoints.map((point) => point[axis]);
-    return Math.max(...values) - Math.min(...values);
-  });
-  const characteristicLength = Math.max(...spans);
-  const tolerance = Math.max(1e-18, characteristicLength ** 2 * 1e-10);
-  for (let row = 0; row < points.length - 1; row += 1) {
-    const columnCount = Math.min(points[row].length, points[row + 1].length);
-    for (let column = 0; column < columnCount - 1; column += 1) {
-      const topLeft = points[row][column];
-      const topRight = points[row][column + 1];
-      const bottomLeft = points[row + 1][column];
-      const bottomRight = points[row + 1][column + 1];
-      if (
-        topLeft && bottomLeft && bottomRight
-        && triangleDoubleArea(topLeft, bottomLeft, bottomRight) > tolerance
-      ) return true;
-      if (
-        topLeft && bottomRight && topRight
-        && triangleDoubleArea(topLeft, bottomRight, topRight) > tolerance
-      ) return true;
-    }
-  }
-  return false;
-}
-
-function createTripleSurfaceTrace(
-  surface: TripleBoundarySurface,
-  variables: { outer: string; middle: string; inner: string },
-) {
-  if (!hasNonDegenerateArea(surface.points)) return null;
-  return {
-    type: "surface" as const,
-    ...splitPointGrid(surface.points),
-    meta: { boundaryKind: surface.kind },
-    showscale: false,
-    opacity: 1,
-    connectgaps: false,
-    colorscale: [[0, "#4f86f7"], [1, "#4f86f7"]],
-    flatshading: false,
-    lighting: { ambient: 0.78, diffuse: 0.72, roughness: 0.82, specular: 0.12, fresnel: 0.04 },
-    hovertemplate: `${variables.outer}=%{x:.3g}<br>${variables.middle}=%{y:.3g}<br>${variables.inner}=%{z:.3g}<extra></extra>`,
-  };
-}
-
 async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
-  if (spec.bounds.length !== 3) throw new Error("三重积分需要内、中、外三层积分上下界");
+  if (spec.bounds.length !== 3) throw new Error("??????????????????");
   const [inner, middle, outer] = spec.bounds;
   const [outerLower, outerUpper] = await evaluateBound(outer);
   const [middleLower, middleUpper, innerLower, innerUpper] = await Promise.all([
@@ -822,115 +734,72 @@ async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
     createEvaluator(inner.lower),
     createEvaluator(inner.upper),
   ]);
-  const outerValues = linspace(outerLower, outerUpper, 56);
-  const middleResolution = 48;
-  const verticalFractions = linspace(0, 1, 24);
-  const upperPoints: NullablePointGrid = [];
-  const lowerPoints: NullablePointGrid = [];
+  const xValues = linspace(outerLower, outerUpper, 36);
+  const xGrid: number[][] = [];
+  const yGrid: Array<Array<number | null>> = [];
+  const lowerGrid: Array<Array<number | null>> = [];
+  const upperGrid: Array<Array<number | null>> = [];
+  const middleResolution = 34;
   let validSamples = 0;
 
-  const evaluateInnerPair = (scope: Record<string, number>) => {
-    const lowerValue = innerLower(scope);
-    const upperValue = innerUpper(scope);
-    return Number.isFinite(lowerValue) && Number.isFinite(upperValue) && lowerValue <= upperValue
-      ? [lowerValue, upperValue] as const
-      : null;
-  };
-
-  const middleRange = (outerValue: number) => {
-    const scope = { [outer.variable]: outerValue };
-    const lowerValue = middleLower(scope);
-    const upperValue = middleUpper(scope);
-    return Number.isFinite(lowerValue) && Number.isFinite(upperValue) && lowerValue <= upperValue
-      ? [lowerValue, upperValue] as const
-      : null;
-  };
-
-  for (const outerValue of outerValues) {
-    const range = middleRange(outerValue);
-    const middleValues = range
-      ? linspace(range[0], range[1], middleResolution)
+  for (const outerValue of xValues) {
+    const outerScope = { [outer.variable]: outerValue };
+    const low = middleLower(outerScope);
+    const high = middleUpper(outerScope);
+    const middleValues: Array<number | null> = Number.isFinite(low) && Number.isFinite(high) && low <= high
+      ? linspace(low, high, middleResolution)
       : Array.from({ length: middleResolution }, () => null);
-    const upperRow: Array<Point3 | null> = [];
-    const lowerRow: Array<Point3 | null> = [];
+    xGrid.push(middleValues.map(() => outerValue));
+    yGrid.push(middleValues);
+    const lowerRow: Array<number | null> = [];
+    const upperRow: Array<number | null> = [];
     for (const middleValue of middleValues) {
       if (middleValue === null) {
-        upperRow.push(null);
         lowerRow.push(null);
+        upperRow.push(null);
         continue;
       }
-      const pair = evaluateInnerPair({
-        [outer.variable]: outerValue,
-        [middle.variable]: middleValue,
-      });
-      if (!pair) {
-        upperRow.push(null);
-        lowerRow.push(null);
-        continue;
-      }
-      validSamples += 1;
-      lowerRow.push([outerValue, middleValue, pair[0]]);
-      upperRow.push([outerValue, middleValue, pair[1]]);
+      const scope = { ...outerScope, [middle.variable]: middleValue };
+      const lowerValue = finiteOrNull(innerLower(scope));
+      const upperValue = finiteOrNull(innerUpper(scope));
+      if (lowerValue !== null && upperValue !== null) validSamples += 1;
+      lowerRow.push(lowerValue);
+      upperRow.push(upperValue);
     }
-    upperPoints.push(upperRow);
-    lowerPoints.push(lowerRow);
+    lowerGrid.push(lowerRow);
+    upperGrid.push(upperRow);
   }
-  if (validSamples === 0) throw new Error("三重积分边界在当前区域没有有限实值");
+  if (validSamples === 0) throw new Error("?????????????????");
 
-  const sampleMiddleBoundary = (useUpper: boolean): NullablePointGrid => outerValues.map((outerValue) => {
-    const range = middleRange(outerValue);
-    if (!range) return verticalFractions.map(() => null);
-    const middleValue = useUpper ? range[1] : range[0];
-    const pair = evaluateInnerPair({
-      [outer.variable]: outerValue,
-      [middle.variable]: middleValue,
-    });
-    if (!pair) return verticalFractions.map(() => null);
-    return verticalFractions.map((fraction) => [
-      outerValue,
-      middleValue,
-      pair[0] + (pair[1] - pair[0]) * fraction,
-    ] as Point3);
-  });
-
-  const sampleOuterBoundary = (outerValue: number): NullablePointGrid => {
-    const range = middleRange(outerValue);
-    const middleValues = range
-      ? linspace(range[0], range[1], middleResolution)
-      : Array.from({ length: middleResolution }, () => null);
-    return middleValues.map((middleValue) => {
-      if (middleValue === null) return verticalFractions.map(() => null);
-      const pair = evaluateInnerPair({
-        [outer.variable]: outerValue,
-        [middle.variable]: middleValue,
-      });
-      if (!pair) return verticalFractions.map(() => null);
-      return verticalFractions.map((fraction) => [
-        outerValue,
-        middleValue,
-        pair[0] + (pair[1] - pair[0]) * fraction,
-      ] as Point3);
-    });
+  const surfaceBase = {
+    type: "surface" as const,
+    x: xGrid,
+    y: yGrid,
+    showscale: false,
+    hovertemplate: outer.variable + "=%{x:.3g}<br>" + middle.variable + "=%{y:.3g}<br>" + inner.variable + "=%{z:.3g}<extra></extra>",
   };
-
-  const candidates: TripleBoundarySurface[] = [
-    { kind: "inner-upper", points: upperPoints },
-    { kind: "inner-lower", points: lowerPoints },
-    { kind: "middle-upper", points: sampleMiddleBoundary(true) },
-    { kind: "middle-lower", points: sampleMiddleBoundary(false) },
-    { kind: "outer-upper", points: sampleOuterBoundary(outerUpper) },
-    { kind: "outer-lower", points: sampleOuterBoundary(outerLower) },
-  ];
-  const data = candidates
-    .map((surface) => createTripleSurfaceTrace(surface, {
-      outer: outer.variable,
-      middle: middle.variable,
-      inner: inner.variable,
-    }))
-    .filter((trace): trace is NonNullable<typeof trace> => trace !== null);
-
   return {
-    data,
+    data: [
+      {
+        ...surfaceBase,
+        z: upperGrid,
+        opacity: 0.72,
+        colorscale: [
+          [0, "#8fb2ff"],
+          [1, BLUE],
+        ],
+        contours: { z: { show: true, color: "rgba(16,42,76,.24)", width: 1 } },
+      },
+      {
+        ...surfaceBase,
+        z: lowerGrid,
+        opacity: 0.35,
+        colorscale: [
+          [0, "#dbe8ff"],
+          [1, "#76a1ff"],
+        ],
+      },
+    ],
     layout: {
       ...commonLayout,
       margin: { l: 8, r: 8, t: 12, b: 8 },
@@ -945,10 +814,9 @@ async function triplePlot(spec: Extract<IntegralSpec, { type: "triple" }>) {
     },
     config: commonConfig,
     dimension: "3d",
-    summary: `显示 ${inner.variable} 从 ${inner.lower} 到 ${inner.upper} 之间的三维积分立体，可拖动旋转。`,
+    summary: "\u663e\u793a " + inner.variable + " \u4ece " + inner.lower + " \u5230 " + inner.upper + " \u4e4b\u95f4\u7684\u4e09\u7ef4\u79ef\u5206\u7acb\u4f53\uff0c\u53ef\u62d6\u52a8\u65cb\u8f6c\u3002",
   } satisfies IntegralPlotSpec;
 }
-
 async function linePlot(spec: Extract<IntegralSpec, { type: "line" }>) {
   const [lower, upper] = await evaluateBound(spec.parameter);
   const [xEval, yEval, zEval] = await Promise.all([
