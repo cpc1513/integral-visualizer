@@ -191,19 +191,15 @@ async function constraintRegionPlot(
     const x = linspace(xRange.lowerValue, xRange.upperValue, 300);
     const y = linspace(yRange.lowerValue, yRange.upperValue, 300);
     let validCount = 0;
-    let minimumViolation = Number.POSITIVE_INFINITY;
     const violationField = y.map((yValue) =>
       x.map((xValue) => {
         const violation = violationAt({ [xRange.variable]: xValue, [yRange.variable]: yValue });
         const valid = violation <= 0;
         if (valid) validCount += 1;
-        minimumViolation = Math.min(minimumViolation, violation);
         return violation;
       }),
     );
     if (validCount === 0) throw new Error("当前扫描范围内没有满足全部约束的区域");
-    const safeMinimum = Math.min(minimumViolation, -Number.EPSILON);
-    const contourStep = Math.max(Math.abs(safeMinimum) / 18, Number.EPSILON);
     return {
       data: [
         {
@@ -211,16 +207,16 @@ async function constraintRegionPlot(
           x,
           y,
           z: violationField,
-          zmin: safeMinimum,
-          zmax: 0,
           showscale: false,
           autocontour: false,
-          contours: { start: safeMinimum, end: 0, size: contourStep, coloring: "fill", showlines: false },
-          colorscale: [
-            [0, "rgba(37,99,235,.30)"],
-            [0.998, "rgba(37,99,235,.30)"],
-            [1, "rgba(37,99,235,0)"],
-          ],
+          contours: {
+            type: "constraint",
+            operation: "<=",
+            value: 0,
+            coloring: "fill",
+            showlines: false,
+          },
+          fillcolor: "rgba(37,99,235,.30)",
           hovertemplate: `${xRange.variable}=%{x:.4g}<br>${yRange.variable}=%{y:.4g}<extra>区域内</extra>`,
         },
         {

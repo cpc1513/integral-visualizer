@@ -48,7 +48,38 @@ describe("custom constraint regions", () => {
     expect(violations.some((value) => value < 0)).toBe(true);
     expect(violations.some((value) => value > 0)).toBe(true);
     expect(new Set(violations).size).toBeGreaterThan(100);
+    expect(plot.data[0].contours).toMatchObject({
+      type: "constraint",
+      operation: "<=",
+      value: 0,
+      coloring: "fill",
+    });
     expect(plot.data[1].contours).toMatchObject({ start: 0, end: 0, coloring: "lines" });
+  });
+
+  it("fills only the valid triangle instead of the entire scan rectangle", async () => {
+    const spec = getIntegralExample("double");
+    if (spec.type !== "double") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["y\\ge 0", "y\\le 1", "x\\ge 0", "x\\le y"],
+      ranges: [
+        { variable: "x", lower: "-3", upper: "3" },
+        { variable: "y", lower: "-3", upper: "3" },
+      ],
+    };
+
+    const plot = await buildPlotSpec(spec);
+    expect(plot.data[0]).toMatchObject({
+      type: "contour",
+      contours: { type: "constraint", operation: "<=", value: 0, coloring: "fill" },
+    });
+    const field = plot.data[0].z as number[][];
+    const centerIndex = 150;
+    const insideIndex = 175;
+    expect(field[insideIndex][centerIndex]).toBeLessThanOrEqual(0);
+    expect(field[0][0]).toBeGreaterThan(0);
+    expect(field.at(-1)?.at(-1)).toBeGreaterThan(0);
   });
 
   it("builds a rotatable implicit surface for a sphere", async () => {
