@@ -84,6 +84,11 @@ const commonLayout: Partial<Layout> = {
   hoverlabel: { bgcolor: "#ffffff", bordercolor: GRID, font: { color: NAVY } },
 };
 
+const twoDimensionalLayout: Partial<Layout> = {
+  ...commonLayout,
+  dragmode: "pan",
+};
+
 const commonConfig: Partial<Config> = {
   responsive: true,
   displaylogo: false,
@@ -112,7 +117,7 @@ async function ordinaryPlot(spec: Extract<IntegralSpec, { type: "ordinary" }>) {
       },
     ],
     layout: {
-      ...commonLayout,
+      ...twoDimensionalLayout,
       xaxis: { title: { text: spec.bound.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0" },
       yaxis: { title: { text: `f(${spec.bound.variable})` }, gridcolor: GRID, zerolinecolor: "#aebbd0" },
     },
@@ -151,7 +156,7 @@ async function doublePlot(spec: Extract<IntegralSpec, { type: "double" }>) {
       },
     ],
     layout: {
-      ...commonLayout,
+      ...twoDimensionalLayout,
       xaxis: {
         title: { text: outer.variable },
         gridcolor: GRID,
@@ -254,7 +259,7 @@ async function constraintRegionPlot(
         },
       ],
       layout: {
-        ...commonLayout,
+        ...twoDimensionalLayout,
         xaxis: { title: { text: xRange.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0" },
         yaxis: { title: { text: yRange.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0", scaleanchor: "x", scaleratio: 1 },
       },

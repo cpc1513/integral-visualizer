@@ -32,6 +32,9 @@ export function VisualizationCanvas({ spec }: VisualizationCanvasProps) {
     const Plotly = plotlyModule.default ?? plotlyModule;
     plotlyRef.current = Plotly;
     await Plotly.react(host, plotSpec.data as Data[], plotSpec.layout, plotSpec.config);
+    if (plotSpec.dimension === "2d") {
+      await Plotly.relayout(host, { dragmode: "pan" } as never);
+    }
     if (version === renderVersionRef.current) setState("ready");
   }, []);
 
