@@ -15,7 +15,7 @@ export interface IntegralPlotSpec {
 export interface ThreeScalarField {
   resolution: number;
   values: number[];
-  mask?: boolean[];
+  clipFields?: number[][];
   isoLevel: number;
   ranges: [ThreeScalarFieldRange, ThreeScalarFieldRange, ThreeScalarFieldRange];
 }
@@ -179,32 +179,53 @@ async function constraintRegionPlot(
 
   if (spec.type === "double") {
     const [xRange, yRange] = ranges;
-    const x = linspace(xRange.lowerValue, xRange.upperValue, 260);
-    const y = linspace(yRange.lowerValue, yRange.upperValue, 260);
+    const x = linspace(xRange.lowerValue, xRange.upperValue, 300);
+    const y = linspace(yRange.lowerValue, yRange.upperValue, 300);
     let validCount = 0;
-    const mask = y.map((yValue) =>
+    let minimumViolation = Number.POSITIVE_INFINITY;
+    const violationField = y.map((yValue) =>
       x.map((xValue) => {
-        const valid = violationAt({ [xRange.variable]: xValue, [yRange.variable]: yValue }) <= 0;
+        const violation = violationAt({ [xRange.variable]: xValue, [yRange.variable]: yValue });
+        const valid = violation <= 0;
         if (valid) validCount += 1;
-        return valid ? 1 : 0;
+        minimumViolation = Math.min(minimumViolation, violation);
+        return violation;
       }),
     );
     if (validCount === 0) throw new Error("当前扫描范围内没有满足全部约束的区域");
+    const safeMinimum = Math.min(minimumViolation, -Number.EPSILON);
+    const contourStep = Math.max(Math.abs(safeMinimum) / 18, Number.EPSILON);
     return {
-      data: [{
-        type: "contour",
-        x,
-        y,
-        z: mask,
-        zmin: 0,
-        zmax: 1,
-        showscale: false,
-        autocontour: false,
-        contours: { start: 0.5, end: 1, size: 0.5, coloring: "fill", showlines: true },
-        line: { color: BLUE, width: 1.8, smoothing: 1.3 },
-        colorscale: [[0, "rgba(37,99,235,0)"], [1, "rgba(37,99,235,.32)"]],
-        hovertemplate: `${xRange.variable}=%{x:.4g}<br>${yRange.variable}=%{y:.4g}<extra>区域内</extra>`,
-      }],
+      data: [
+        {
+          type: "contour",
+          x,
+          y,
+          z: violationField,
+          zmin: safeMinimum,
+          zmax: 0,
+          showscale: false,
+          autocontour: false,
+          contours: { start: safeMinimum, end: 0, size: contourStep, coloring: "fill", showlines: false },
+          colorscale: [
+            [0, "rgba(37,99,235,.30)"],
+            [0.998, "rgba(37,99,235,.30)"],
+            [1, "rgba(37,99,235,0)"],
+          ],
+          hovertemplate: `${xRange.variable}=%{x:.4g}<br>${yRange.variable}=%{y:.4g}<extra>区域内</extra>`,
+        },
+        {
+          type: "contour",
+          x,
+          y,
+          z: violationField,
+          showscale: false,
+          autocontour: false,
+          contours: { start: 0, end: 0, size: 1, coloring: "lines", showlines: true },
+          line: { color: BLUE, width: 2.2, smoothing: 1.3 },
+          hoverinfo: "skip",
+        },
+      ],
       layout: {
         ...commonLayout,
         xaxis: { title: { text: xRange.variable }, gridcolor: GRID, zerolinecolor: "#aebbd0" },
@@ -342,6 +363,7 @@ async function implicitRegionPlot(
     left: await createEvaluator(constraint.left),
     right: await createEvaluator(constraint.right),
   })));
+  const inequalityEvaluators = evaluators.filter(({ constraint }) => constraint.operator !== "=");
   const ranges = await Promise.all(region.ranges.map(async (range) => {
     const [lower, upper] = await evaluateBound(range);
     if (lower >= upper) throw new Error(`${range.variable} 的扫描范围下限必须小于上限`);
@@ -377,7 +399,7 @@ async function implicitRegionPlot(
       });
     });
 
-    if (explicitIndex >= 0) {
+    if (explicitIndex >= 0 && inequalityEvaluators.length === 0) {
       const primary = evaluators[explicitIndex];
       const solvedRange = ranges.find((range) =>
         primary.constraint.left.trim() === range.variable || primary.constraint.right.trim() === range.variable,
@@ -470,7 +492,8 @@ async function implicitRegionPlot(
     const z: number[] = [];
     const value: Array<number | null> = [];
     const threeValues: number[] = [];
-    const mask: boolean[] = [];
+    const clipEvaluators = inequalityEvaluators;
+    const clipFields = clipEvaluators.map(() => [] as number[]);
     let visibleSamples = 0;
     for (const zValue of zValues) for (const yValue of yValues) for (const xValue of xValues) {
       const values = evaluateAll({ [xRange.variable]: xValue, [yRange.variable]: yValue, [zRange.variable]: zValue });
@@ -480,7 +503,10 @@ async function implicitRegionPlot(
       x.push(xValue); y.push(yValue); z.push(zValue);
       value.push(allowed ? surfaceValue : null);
       threeValues.push(surfaceValue);
-      mask.push(allowed);
+      clipEvaluators.forEach(({ constraint }, index) => {
+        const evaluated = values.find((value) => value.constraint === constraint)!;
+        clipFields[index].push(constraintViolation(constraint, evaluated.left, evaluated.right, equalityTolerance));
+      });
       if (allowed && Math.abs(surfaceValue) <= equalityTolerance * 2) visibleSamples += 1;
     }
     if (visibleSamples === 0) throw new Error("当前扫描范围内没有找到满足条件的曲面");
@@ -509,7 +535,7 @@ async function implicitRegionPlot(
       threeField: {
         resolution: count,
         values: threeValues,
-        mask,
+        clipFields: clipFields.length > 0 ? clipFields : undefined,
         isoLevel: 0,
         ranges: [
           { variable: xRange.variable, lower: xRange.lowerValue, upper: xRange.upperValue },

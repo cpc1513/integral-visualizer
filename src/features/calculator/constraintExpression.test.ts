@@ -3,6 +3,7 @@ import { createComputePayload } from "./computePayload";
 import { parseConstraint } from "./constraintExpression";
 import { getIntegralExample } from "./examples";
 import { buildPlotSpec } from "../visualization/plotSpec";
+import { clipTriangleSoup } from "../visualization/clipTriangleSoup";
 import { convertLineParameter, convertSurfaceParameter } from "./BoundsEditor";
 
 describe("custom constraint regions", () => {
@@ -28,7 +29,7 @@ describe("custom constraint regions", () => {
     expect(() => parseConstraint("x^2+y^2")).toThrow("缺少关系符");
   });
 
-  it("builds a two-dimensional mask for a disk", async () => {
+  it("builds a continuous two-dimensional field for a disk", async () => {
     const spec = getIntegralExample("double");
     if (spec.type !== "double") throw new Error("unexpected example type");
     spec.regionMode = "constraints";
@@ -41,8 +42,13 @@ describe("custom constraint regions", () => {
     };
     const plot = await buildPlotSpec(spec);
     expect(plot.dimension).toBe("2d");
+    expect(plot.data).toHaveLength(2);
     expect(plot.data[0].type).toBe("contour");
-    expect((plot.data[0].z as Array<Array<number | null>>).flat()).toContain(1);
+    const violations = (plot.data[0].z as number[][]).flat();
+    expect(violations.some((value) => value < 0)).toBe(true);
+    expect(violations.some((value) => value > 0)).toBe(true);
+    expect(new Set(violations).size).toBeGreaterThan(100);
+    expect(plot.data[1].contours).toMatchObject({ start: 0, end: 0, coloring: "lines" });
   });
 
   it("builds a rotatable implicit surface for a sphere", async () => {
@@ -123,11 +129,58 @@ describe("custom constraint regions", () => {
     expect(plot.data[0].opacity).toBe(1);
     expect((plot.data[0].value as Array<number | null>).some((value) => value === null)).toBe(true);
     expect(plot.threeField?.resolution).toBe(48);
-    expect(plot.threeField?.mask?.some(Boolean)).toBe(true);
-    expect(plot.threeField?.mask?.some((value) => !value)).toBe(true);
+    expect(plot.threeField?.clipFields).toHaveLength(1);
+    expect(plot.threeField?.clipFields?.[0].some((value) => value <= 0)).toBe(true);
+    expect(plot.threeField?.clipFields?.[0].some((value) => value > 0)).toBe(true);
   });
 
-  it("renders an explicitly solvable implicit surface as a smooth surface grid", async () => {
+  it("clips a cylinder to smooth open rings instead of jagged triangle rows", async () => {
+    const spec = getIntegralExample("surface");
+    if (spec.type !== "surface") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["x^2+y^2=1", "z≥-0.5", "z≤0.5"],
+      ranges: [
+        { variable: "x", lower: "-1.3", upper: "1.3" },
+        { variable: "y", lower: "-1.3", upper: "1.3" },
+        { variable: "z", lower: "-1", upper: "1" },
+      ],
+    };
+    const plot = await buildPlotSpec(spec);
+    const field = plot.threeField;
+    if (!field?.clipFields) throw new Error("missing continuous clip fields");
+    const [{ MeshStandardMaterial }, { MarchingCubes }] = await Promise.all([
+      import("three"),
+      import("three/addons/objects/MarchingCubes.js"),
+    ]);
+    const material = new MeshStandardMaterial();
+    const marching = new MarchingCubes(field.resolution, material, false, false, 120000);
+    marching.isolation = field.isoLevel;
+    marching.field.set(field.values);
+    marching.update();
+    const clipped = clipTriangleSoup(
+      marching.geometry.getAttribute("position").array,
+      marching.geometry.getAttribute("normal").array,
+      marching.geometry.drawRange.count,
+      field.resolution,
+      field.clipFields,
+    );
+    const zRange = field.ranges[2];
+    const zSpan = zRange.upper - zRange.lower;
+    const zValues = Array.from(clipped.positions)
+      .filter((_value, index) => index % 3 === 2)
+      .map((normalized) =>
+        zRange.lower + (zSpan * ((normalized + 1) * field.resolution)) / (2 * (field.resolution - 1)),
+      );
+    expect(Math.min(...zValues)).toBeCloseTo(-0.5, 5);
+    expect(Math.max(...zValues)).toBeCloseTo(0.5, 5);
+    const zNormals = Array.from(clipped.normals).filter((_value, index) => index % 3 === 2);
+    expect(Math.max(...zNormals.map(Math.abs))).toBeLessThan(0.05);
+    marching.geometry.dispose();
+    material.dispose();
+  });
+
+  it("routes a clipped explicit surface through continuous Three.js geometry", async () => {
     const spec = getIntegralExample("surface");
     if (spec.type !== "surface") throw new Error("unexpected example type");
     spec.regionMode = "constraints";
@@ -140,10 +193,8 @@ describe("custom constraint regions", () => {
       ],
     };
     const plot = await buildPlotSpec(spec);
-    expect(plot.data[0].type).toBe("surface");
-    const z = plot.data[0].z as Array<Array<number | null>>;
-    expect(z).toHaveLength(72);
-    expect(z.flat().filter((value) => value !== null).length).toBeGreaterThan(3000);
+    expect(plot.data[0].type).toBe("isosurface");
+    expect(plot.threeField?.clipFields).toHaveLength(1);
   });
 
   it("renders a clipped plane without isosurface artifacts", async () => {
@@ -155,10 +206,8 @@ describe("custom constraint regions", () => {
       ranges: ["x", "y", "z"].map((variable) => ({ variable, lower: "-4", upper: "4" })),
     };
     const plot = await buildPlotSpec(spec);
-    expect(plot.data[0].type).toBe("surface");
-    const nonNullZ = (plot.data[0].z as Array<Array<number | null>>).flat().filter((value) => value !== null);
-    expect(nonNullZ.length).toBeGreaterThan(400);
-    expect(nonNullZ.every((value) => value === 0)).toBe(true);
+    expect(plot.data[0].type).toBe("isosurface");
+    expect(plot.threeField?.clipFields).toHaveLength(4);
   });
 
   it("serializes constraints for the Python numerical worker", () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ThreeScalarField } from "./plotSpec";
+import { clipTriangleSoup } from "./clipTriangleSoup";
 
 interface ThreeIsosurfaceCanvasProps {
   field: ThreeScalarField;
@@ -12,10 +13,6 @@ const BLUE = 0x2563eb;
 const NAVY = 0x102a4c;
 const GRID = 0xdce4ef;
 const CANVAS = 0xf8fafc;
-
-function clampIndex(value: number, resolution: number) {
-  return Math.max(0, Math.min(resolution - 1, Math.round(((value + 1) * resolution) / 2)));
-}
 
 export function ThreeIsosurfaceCanvas({
   field,
@@ -75,37 +72,36 @@ export function ThreeIsosurfaceCanvas({
         marching.update();
 
         let surface: InstanceType<typeof THREE.Mesh> = marching;
-        if (field.mask) {
+        if (field.clipFields?.length) {
           const sourcePosition = marching.geometry.getAttribute("position");
           const sourceNormal = marching.geometry.getAttribute("normal");
           const drawCount = marching.geometry.drawRange.count;
-          const positions: number[] = [];
-          const normals: number[] = [];
-          for (let vertex = 0; vertex < drawCount; vertex += 3) {
-            const centroidX = (sourcePosition.getX(vertex) + sourcePosition.getX(vertex + 1) + sourcePosition.getX(vertex + 2)) / 3;
-            const centroidY = (sourcePosition.getY(vertex) + sourcePosition.getY(vertex + 1) + sourcePosition.getY(vertex + 2)) / 3;
-            const centroidZ = (sourcePosition.getZ(vertex) + sourcePosition.getZ(vertex + 1) + sourcePosition.getZ(vertex + 2)) / 3;
-            const xIndex = clampIndex(centroidX, field.resolution);
-            const yIndex = clampIndex(centroidY, field.resolution);
-            const zIndex = clampIndex(centroidZ, field.resolution);
-            const maskIndex = xIndex + yIndex * field.resolution + zIndex * field.resolution * field.resolution;
-            if (!field.mask[maskIndex]) continue;
-            for (let offset = 0; offset < 3; offset += 1) {
-              const index = vertex + offset;
-              positions.push(sourcePosition.getX(index), sourcePosition.getY(index), sourcePosition.getZ(index));
-              normals.push(sourceNormal.getX(index), sourceNormal.getY(index), sourceNormal.getZ(index));
-            }
-          }
-          if (positions.length === 0) throw new Error("当前范围内没有可显示的隐式曲面网格");
+          const clipped = clipTriangleSoup(
+            sourcePosition.array,
+            sourceNormal.array,
+            drawCount,
+            field.resolution,
+            field.clipFields,
+          );
+          if (clipped.triangleCount === 0) throw new Error("当前范围内没有可显示的隐式曲面网格");
           const clippedGeometry = new THREE.BufferGeometry();
-          clippedGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-          clippedGeometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+          clippedGeometry.setAttribute("position", new THREE.BufferAttribute(clipped.positions, 3));
+          clippedGeometry.setAttribute("normal", new THREE.BufferAttribute(clipped.normals, 3));
           surface = new THREE.Mesh(clippedGeometry, material);
           marching.geometry.dispose();
         }
 
-        surface.scale.set(spans[0] / 2, spans[1] / 2, spans[2] / 2);
-        surface.position.set(centers[0], centers[1], centers[2]);
+        const marchingScale = field.resolution / (field.resolution - 1);
+        surface.scale.set(
+          (spans[0] / 2) * marchingScale,
+          (spans[1] / 2) * marchingScale,
+          (spans[2] / 2) * marchingScale,
+        );
+        surface.position.set(
+          centers[0] + spans[0] / (2 * (field.resolution - 1)),
+          centers[1] + spans[1] / (2 * (field.resolution - 1)),
+          centers[2] + spans[2] / (2 * (field.resolution - 1)),
+        );
         scene.add(surface);
 
         scene.add(new THREE.HemisphereLight(0xffffff, 0x9eb4d5, 2.05));
@@ -240,4 +236,3 @@ export function ThreeIsosurfaceCanvas({
 
   return <div ref={hostRef} className="three-region-host" aria-hidden="true" />;
 }
-
