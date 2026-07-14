@@ -1322,6 +1322,7 @@ math-field:focus-visible {
 .topic-sidebar button span { font-size: 12px; line-height: 1.4; }
 .topic-sidebar button b { flex: 0 0 auto; font-size: 11px; }
 .computer-mobile-filters .select-field { display: none; }
+.past-exam-filters .year-mobile-filter { display: none; }
 .question-region { margin-top: 10px; padding: 10px 12px; border-left: 3px solid #8db3f8; border-radius: 0 9px 9px 0; background: #f7faff; }
 .question-region > strong { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; }
 .computer-answer { margin: 0 0 10px; color: var(--navy); }
@@ -1330,4 +1331,5 @@ math-field:focus-visible {
   .computer-library-layout { display: block; }
   .topic-sidebar { display: none; }
   .computer-mobile-filters .select-field { display: flex; }
+  .past-exam-filters .year-mobile-filter { display: flex; }
 }

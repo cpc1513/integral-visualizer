@@ -164,27 +164,30 @@ async function constraintRegionPlot(
 
   if (spec.type === "double") {
     const [xRange, yRange] = ranges;
-    const x = linspace(xRange.lowerValue, xRange.upperValue, 160);
-    const y = linspace(yRange.lowerValue, yRange.upperValue, 160);
+    const x = linspace(xRange.lowerValue, xRange.upperValue, 260);
+    const y = linspace(yRange.lowerValue, yRange.upperValue, 260);
     let validCount = 0;
     const mask = y.map((yValue) =>
       x.map((xValue) => {
         const valid = violationAt({ [xRange.variable]: xValue, [yRange.variable]: yValue }) <= 0;
         if (valid) validCount += 1;
-        return valid ? 1 : null;
+        return valid ? 1 : 0;
       }),
     );
     if (validCount === 0) throw new Error("当前扫描范围内没有满足全部约束的区域");
     return {
       data: [{
-        type: "heatmap",
+        type: "contour",
         x,
         y,
         z: mask,
         zmin: 0,
         zmax: 1,
         showscale: false,
-        colorscale: [[0, "rgba(37,99,235,.32)"], [1, "rgba(37,99,235,.32)"]],
+        autocontour: false,
+        contours: { start: 0.5, end: 1, size: 0.5, coloring: "fill", showlines: true },
+        line: { color: BLUE, width: 1.8, smoothing: 1.3 },
+        colorscale: [[0, "rgba(37,99,235,0)"], [1, "rgba(37,99,235,.32)"]],
         hovertemplate: `${xRange.variable}=%{x:.4g}<br>${yRange.variable}=%{y:.4g}<extra>区域内</extra>`,
       }],
       layout: {
@@ -199,9 +202,9 @@ async function constraintRegionPlot(
   }
 
   const [xRange, yRange, zRange] = ranges;
-  const xValues = linspace(xRange.lowerValue, xRange.upperValue, 25);
-  const yValues = linspace(yRange.lowerValue, yRange.upperValue, 25);
-  const zValues = linspace(zRange.lowerValue, zRange.upperValue, 25);
+  const xValues = linspace(xRange.lowerValue, xRange.upperValue, 32);
+  const yValues = linspace(yRange.lowerValue, yRange.upperValue, 32);
+  const zValues = linspace(zRange.lowerValue, zRange.upperValue, 32);
   const x: number[] = [];
   const y: number[] = [];
   const z: number[] = [];
@@ -238,7 +241,7 @@ async function constraintRegionPlot(
         caps: { x: { show: false }, y: { show: false }, z: { show: false } },
         colorscale: [[0, "#8fb2ff"], [1, BLUE]],
         showscale: false,
-        opacity: 0.82,
+        opacity: 0.94,
         flatshading: false,
         lighting: { ambient: 0.9, diffuse: 0.45, roughness: 0.9, specular: 0.08, fresnel: 0.04 },
         hovertemplate: `${xRange.variable}=%{x:.3g}<br>${yRange.variable}=%{y:.3g}<br>${zRange.variable}=%{z:.3g}<extra></extra>`,
@@ -298,7 +301,107 @@ async function implicitRegionPlot(
     );
 
   if (spec.type === "surface") {
-    const count = 31;
+    const containsVariable = (expression: string, variable: string) => {
+      const escaped = variable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`).test(expression);
+    };
+    const explicitIndex = evaluators.findIndex(({ constraint }) => {
+      if (constraint.operator !== "=") return false;
+      return ranges.some((range) => {
+        const leftIsVariable = constraint.left.trim() === range.variable;
+        const rightIsVariable = constraint.right.trim() === range.variable;
+        return (
+          (leftIsVariable && !containsVariable(constraint.right, range.variable))
+          || (rightIsVariable && !containsVariable(constraint.left, range.variable))
+        );
+      });
+    });
+
+    if (explicitIndex >= 0) {
+      const primary = evaluators[explicitIndex];
+      const solvedRange = ranges.find((range) =>
+        primary.constraint.left.trim() === range.variable || primary.constraint.right.trim() === range.variable,
+      )!;
+      const solvedEvaluator = primary.constraint.left.trim() === solvedRange.variable
+        ? primary.right
+        : primary.left;
+      const independentRanges = ranges.filter((range) => range.variable !== solvedRange.variable);
+      const [columnRange, rowRange] = independentRanges;
+      const columnValues = linspace(columnRange.lowerValue, columnRange.upperValue, 72);
+      const rowValues = linspace(rowRange.lowerValue, rowRange.upperValue, 72);
+      const xGrid: Array<Array<number | null>> = [];
+      const yGrid: Array<Array<number | null>> = [];
+      const zGrid: Array<Array<number | null>> = [];
+      let validCount = 0;
+
+      for (const rowValue of rowValues) {
+        const xRow: Array<number | null> = [];
+        const yRow: Array<number | null> = [];
+        const zRow: Array<number | null> = [];
+        for (const columnValue of columnValues) {
+          const scope: Record<string, number> = {
+            [columnRange.variable]: columnValue,
+            [rowRange.variable]: rowValue,
+          };
+          const solvedValue = solvedEvaluator(scope);
+          scope[solvedRange.variable] = solvedValue;
+          const withinSolvedRange = Number.isFinite(solvedValue)
+            && solvedValue >= solvedRange.lowerValue - equalityTolerance
+            && solvedValue <= solvedRange.upperValue + equalityTolerance;
+          const values = withinSolvedRange ? evaluateAll(scope) : [];
+          const valid = withinSolvedRange && values.every(({ constraint, left, right }, index) =>
+            index === explicitIndex || constraintViolation(constraint, left, right, equalityTolerance) <= 0,
+          );
+          if (valid) validCount += 1;
+          xRow.push(valid ? scope[xRange.variable] : null);
+          yRow.push(valid ? scope[yRange.variable] : null);
+          zRow.push(valid ? scope[zRange.variable] : null);
+        }
+        xGrid.push(xRow);
+        yGrid.push(yRow);
+        zGrid.push(zRow);
+      }
+
+      if (validCount > 0) {
+        return {
+          data: [{
+            type: "surface",
+            x: xGrid,
+            y: yGrid,
+            z: zGrid,
+            connectgaps: false,
+            colorscale: [[0, "#9bbcff"], [1, BLUE]],
+            showscale: false,
+            opacity: 0.96,
+            contours: {
+              x: { show: false },
+              y: { show: false },
+              z: { show: false },
+            },
+            lighting: { ambient: 0.82, diffuse: 0.7, roughness: 0.72, specular: 0.12, fresnel: 0.04 },
+            lightposition: { x: 120, y: 160, z: 220 },
+            hovertemplate: `${xRange.variable}=%{x:.3g}<br>${yRange.variable}=%{y:.3g}<br>${zRange.variable}=%{z:.3g}<extra></extra>`,
+          }],
+          layout: {
+            ...commonLayout,
+            margin: { l: 8, r: 8, t: 12, b: 8 },
+            scene: {
+              xaxis: { title: { text: xRange.variable }, gridcolor: GRID },
+              yaxis: { title: { text: yRange.variable }, gridcolor: GRID },
+              zaxis: { title: { text: zRange.variable }, gridcolor: GRID },
+              bgcolor: "#f8fafc",
+              aspectmode: "data",
+              camera: { eye: { x: 1.45, y: 1.5, z: 1.1 } },
+            },
+          },
+          config: commonConfig,
+          dimension: "3d",
+          summary: `显示满足 ${region.constraints.join("，")} 的平滑曲面，可拖动旋转。`,
+        };
+      }
+    }
+
+    const count = 43;
     const xValues = linspace(xRange.lowerValue, xRange.upperValue, count);
     const yValues = linspace(yRange.lowerValue, yRange.upperValue, count);
     const zValues = linspace(zRange.lowerValue, zRange.upperValue, count);
@@ -321,7 +424,7 @@ async function implicitRegionPlot(
         type: "isosurface", x, y, z, value, isomin: 0, isomax: 0,
         surface: { count: 1, fill: 0.9 },
         caps: { x: { show: false }, y: { show: false }, z: { show: false } },
-        colorscale: [[0, "#9bbcff"], [1, BLUE]], showscale: false, opacity: 0.82,
+        colorscale: [[0, "#9bbcff"], [1, BLUE]], showscale: false, opacity: 0.94,
         flatshading: false,
         lighting: { ambient: 0.9, diffuse: 0.45, roughness: 0.9, specular: 0.08, fresnel: 0.04 },
         hovertemplate: "x=%{x:.3g}<br>y=%{y:.3g}<br>z=%{z:.3g}<extra></extra>",

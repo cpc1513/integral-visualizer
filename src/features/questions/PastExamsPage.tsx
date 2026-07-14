@@ -69,7 +69,7 @@ export function PastExamsPage() {
         <span className="question-count">当前显示 {filteredQuestions.length} 道</span>
       </header>
 
-      <div className="exam-filters" aria-label="真题筛选">
+      <div className="exam-filters past-exam-filters" aria-label="真题筛选">
         <label className="search-field">
           <Search size={17} aria-hidden="true" />
           <span className="sr-only">搜索题目</span>
@@ -80,7 +80,7 @@ export function PastExamsPage() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <label className="select-field">
+        <label className="select-field year-mobile-filter">
           <Filter size={16} aria-hidden="true" />
           <span className="sr-only">按学年筛选</span>
           <select value={year} onChange={(event) => setYear(event.target.value)}>
@@ -108,17 +108,31 @@ export function PastExamsPage() {
         </label>
       </div>
 
-      <section className="question-list" aria-label="历年真题列表">
-        {filteredQuestions.length ? (
-          filteredQuestions.map((question) => <QuestionItem key={question.id} question={question} />)
-        ) : (
-          <div className="empty-results">
-            <Search size={23} aria-hidden="true" />
-            <strong>没有匹配的题目</strong>
-            <span>请调整关键词或筛选条件。</span>
-          </div>
-        )}
-      </section>
+      <div className="computer-library-layout">
+        <aside className="topic-sidebar" aria-label="真题学年">
+          <button className={year === "all" ? "is-active" : ""} onClick={() => setYear("all")}>
+            <span>全部学年</span>
+            <b>{dataset.meta.extractedCount}</b>
+          </button>
+          {years.map((item) => (
+            <button key={item} className={year === item ? "is-active" : ""} onClick={() => setYear(item)}>
+              <span>{item} 学年</span>
+              <b>{dataset.meta.countsByAcademicYear[item]}</b>
+            </button>
+          ))}
+        </aside>
+        <section className="question-list" aria-label="历年真题列表">
+          {filteredQuestions.length ? (
+            filteredQuestions.map((question) => <QuestionItem key={question.id} question={question} />)
+          ) : (
+            <div className="empty-results">
+              <Search size={23} aria-hidden="true" />
+              <strong>没有匹配的题目</strong>
+              <span>请调整关键词或筛选条件。</span>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

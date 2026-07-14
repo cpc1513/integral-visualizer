@@ -41,7 +41,7 @@ describe("custom constraint regions", () => {
     };
     const plot = await buildPlotSpec(spec);
     expect(plot.dimension).toBe("2d");
-    expect(plot.data[0].type).toBe("heatmap");
+    expect(plot.data[0].type).toBe("contour");
     expect((plot.data[0].z as Array<Array<number | null>>).flat()).toContain(1);
   });
 
@@ -86,6 +86,40 @@ describe("custom constraint regions", () => {
     expect(plot.dimension).toBe("3d");
     expect(plot.data[0].type).toBe("isosurface");
     expect((plot.data[0].value as Array<number | null>).some((value) => value === null)).toBe(true);
+  });
+
+  it("renders an explicitly solvable implicit surface as a smooth surface grid", async () => {
+    const spec = getIntegralExample("surface");
+    if (spec.type !== "surface") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["z=1-(x^2+y^2)", "x^2+y^2\\le1"],
+      ranges: [
+        { variable: "x", lower: "-1", upper: "1" },
+        { variable: "y", lower: "-1", upper: "1" },
+        { variable: "z", lower: "-1", upper: "1" },
+      ],
+    };
+    const plot = await buildPlotSpec(spec);
+    expect(plot.data[0].type).toBe("surface");
+    const z = plot.data[0].z as Array<Array<number | null>>;
+    expect(z).toHaveLength(72);
+    expect(z.flat().filter((value) => value !== null).length).toBeGreaterThan(3000);
+  });
+
+  it("renders a clipped plane without isosurface artifacts", async () => {
+    const spec = getIntegralExample("surface");
+    if (spec.type !== "surface") throw new Error("unexpected example type");
+    spec.regionMode = "constraints";
+    spec.constraintRegion = {
+      constraints: ["x\\ge0", "x\\le3", "y\\ge0", "y\\le3", "z=0"],
+      ranges: ["x", "y", "z"].map((variable) => ({ variable, lower: "-4", upper: "4" })),
+    };
+    const plot = await buildPlotSpec(spec);
+    expect(plot.data[0].type).toBe("surface");
+    const nonNullZ = (plot.data[0].z as Array<Array<number | null>>).flat().filter((value) => value !== null);
+    expect(nonNullZ.length).toBeGreaterThan(400);
+    expect(nonNullZ.every((value) => value === 0)).toBe(true);
   });
 
   it("serializes constraints for the Python numerical worker", () => {
