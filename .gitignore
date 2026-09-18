@@ -1,0 +1,4 @@
+node_modules
+dist
+public/fonts/mathlive
+public/data/questions.json

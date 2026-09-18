@@ -1,0 +1,236 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+/* ===== 积分可视化平台定制（亮底默认，.dark 覆盖为暗色） ===== */
+html, body, #root {
+  height: 100%;
+  background-color: #f4f6f9;
+  color-scheme: light;
+}
+html.dark, html.dark body, html.dark #root {
+  background-color: #0a0d13;
+  color-scheme: dark;
+}
+
+/* 细滚动条 */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+html.dark *::-webkit-scrollbar-thumb { background: #27272a; }
+html.dark *::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+/* KaTeX 公式行距微调 */
+.latex-block .katex-display { margin: 0.4em 0; }
+.latex-inline .katex { font-size: 1.02em; }
+
+/* 二维区域图网格线颜色（Region2D 内 SVG 引用） */
+:root { --r2d-grid: #e4e4e7; --r2d-axis: #52525b; --r2d-label: #71717a; }
+html.dark { --r2d-grid: #27272a; --r2d-axis: #71717a; --r2d-label: #a1a1aa; }
+
+/* MathLive 右键菜单（ui-menu 变量，两主题分别取值） */
+:root {
+  --ui-menu-bg: #ffffff;
+  --ui-menu-text: #27272a;
+  --ui-menu-text-active: #ffffff;
+  --ui-menu-bg-active: #0891b2;
+  --ui-menu-bg-active-muted: #e4e4e7;
+  --ui-menu-divider: #e4e4e7;
+  --ui-menu-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+}
+html.dark {
+  --ui-menu-bg: #1c1c21;
+  --ui-menu-text: #e4e4e7;
+  --ui-menu-text-active: #ffffff;
+  --ui-menu-bg-active: #155e75;
+  --ui-menu-bg-active-muted: #2a2a31;
+  --ui-menu-divider: #3f3f46;
+  --ui-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* 右键菜单在 math-field 的 shadow DOM 内，:host 规则把 neutral 与 ui-menu 变量
+   钉成跟随 OS 主题的亮色值，继承链在 host 处被截断。页面侧直接覆盖 host 元素
+   （外层文档选择器优先级高于 shadow 内 :host 规则），让菜单跟随本站主题。 */
+html.dark math-field {
+  --neutral-100: #1c1c21;
+  --neutral-200: #2a2a31;
+  --neutral-900: #f4f4f5;
+  --primary-color: #155e75;
+  --ui-menu-bg: #1c1c21;
+  --ui-menu-text: #e4e4e7;
+  --ui-menu-text-active: #ffffff;
+  --ui-menu-bg-active: #155e75;
+  --ui-menu-bg-active-muted: #2a2a31;
+  --ui-menu-bg-hover: #2a2a31;
+  --ui-menu-divider: 0.5px solid #3f3f46;
+  --ui-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* MathLive 所见即所得公式输入框 */
+math-field.formula-input {
+  --background: transparent;
+  --foreground: #155e75;
+  --caret-color: #0891b2;
+  --selection-background: rgba(8, 145, 178, 0.22);
+  --selection-color: #164e63;
+  --placeholder-color: rgba(8, 145, 178, 0.45);
+  --contains-highlight-background: rgba(8, 145, 178, 0.10);
+  --smart-fence-opacity: 0.55;
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  padding: 14px 16px;
+  font-size: 20px;
+  line-height: 1.6;
+  background: #ffffff;
+  border: 1px solid #d4d4d8;
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+html.dark math-field.formula-input {
+  --foreground: #e0f2fe;
+  --caret-color: #22d3ee;
+  --selection-background: rgba(34, 211, 238, 0.28);
+  --selection-color: #f0fdff;
+  --placeholder-color: rgba(103, 232, 249, 0.5);
+  --contains-highlight-background: rgba(34, 211, 238, 0.12);
+  background: rgba(24, 24, 27, 0.8);
+  border-color: #27272a;
+}
+math-field.formula-input:focus-within,
+math-field.formula-input:focus {
+  border-color: rgba(8, 145, 178, 0.55);
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
+}
+html.dark math-field.formula-input:focus-within,
+html.dark math-field.formula-input:focus {
+  border-color: rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+
+/* MathLive 虚拟键盘（亮底默认） */
+:root {
+  --keyboard-background: #f4f4f5;
+  --keyboard-border: #d4d4d8;
+  --keyboard-accent-color: #0891b2;
+  --keyboard-toolbar-background: #e9e9ed;
+  --keyboard-toolbar-background-hover: #dcdce2;
+  --keyboard-toolbar-background-selected: #a5f3fc;
+  --keyboard-toolbar-text: #52525b;
+  --keyboard-toolbar-text-active: #0e7490;
+  --keycap-background: #ffffff;
+  --keycap-background-hover: #f4f4f5;
+  --keycap-background-active: #cffafe;
+  --keycap-background-pressed: #a5f3fc;
+  --keycap-border: #d4d4d8;
+  --keycap-border-bottom: #a1a1aa;
+  --keycap-text: #27272a;
+  --keycap-text-hover: #18181b;
+  --keycap-text-active: #155e75;
+  --keycap-text-pressed: #155e75;
+  --keycap-shift-text: #71717a;
+  --keycap-secondary-background: #e4e4e7;
+  --keycap-secondary-background-hover: #d4d4d8;
+  --keycap-secondary-border: #d4d4d8;
+  --keycap-secondary-border-bottom: #a1a1aa;
+  --keycap-secondary-text: #3f3f46;
+}
+html.dark {
+  --keyboard-background: #101014;
+  --keyboard-border: #27272a;
+  --keyboard-accent-color: #22d3ee;
+  --keyboard-toolbar-background: #141419;
+  --keyboard-toolbar-background-hover: #1f1f26;
+  --keyboard-toolbar-background-selected: #164e63;
+  --keyboard-toolbar-text: #a1a1aa;
+  --keyboard-toolbar-text-active: #22d3ee;
+  --keycap-background: #1f1f24;
+  --keycap-background-hover: #27272e;
+  --keycap-background-active: #164e63;
+  --keycap-background-pressed: #155e75;
+  --keycap-border: #3f3f46;
+  --keycap-border-bottom: #52525b;
+  --keycap-text: #e4e4e7;
+  --keycap-text-hover: #f4f4f5;
+  --keycap-text-active: #cffafe;
+  --keycap-text-pressed: #cffafe;
+  --keycap-shift-text: #8b8b94;
+  --keycap-secondary-background: #2a2a31;
+  --keycap-secondary-background-hover: #34343c;
+  --keycap-secondary-border: #3f3f46;
+  --keycap-secondary-border-bottom: #52525b;
+  --keycap-secondary-text: #e4e4e7;
+}
