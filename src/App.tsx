@@ -83,8 +83,8 @@ export default function App() {
               <Sigma size={17} className="text-cyan-700 dark:text-cyan-300" />
             </div>
             <div>
-              <h1 className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">积分可视化学习平台</h1>
-              <p className="text-[11px] text-zinc-500">高等数学（下册）· 期末真题 84 + 机考题库 133</p>
+              <h1 className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 leading-tight">积分视界</h1>
+              <p className="text-[11px] text-zinc-500">高等数学（下册）</p>
             </div>
             <button
               onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
